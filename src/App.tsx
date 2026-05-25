@@ -1353,45 +1353,6 @@ Click OK to confirm payment authorization.`);
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'center', width: '100%' }}>
               {/* Native Google Auth Button wrapper */}
               <div id="google-signin-button" style={{ minHeight: '40px', width: '100%', display: 'flex', justifyContent: 'center' }}></div>
-
-              {/* Dynamic Google SSO Setup Guide */}
-              <div style={{
-                marginTop: '12px',
-                fontSize: '11px',
-                color: 'var(--text-secondary)',
-                textAlign: 'left',
-                background: 'rgba(255, 255, 255, 0.02)',
-                padding: '12px 14px',
-                borderRadius: '8px',
-                border: '1px solid var(--border-color)',
-                width: '100%',
-                lineHeight: '1.5'
-              }}>
-                <span style={{ color: 'var(--primary)', fontWeight: 'bold', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  ⚙️ Resolving Google Authorization Error (Error 401)
-                </span>
-                <span>
-                  The <strong>invalid_client</strong> error occurs when Google receives a dummy/placeholder Client ID. To configure your own active credentials:
-                </span>
-                <ol style={{ paddingLeft: '16px', marginTop: '6px', marginBottom: '6px', color: 'var(--text-primary)' }}>
-                  <li>Go to the <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--primary)', textDecoration: 'underline' }}>Google Cloud Console</a>.</li>
-                  <li>Create/Select your project and retrieve your <strong>OAuth 2.0 Client ID</strong>.</li>
-                  <li>Paste it into the <code>.env</code> file in your project root folder:</li>
-                </ol>
-                <code style={{
-                  display: 'block',
-                  background: 'rgba(0, 0, 0, 0.3)',
-                  padding: '6px 8px',
-                  borderRadius: '4px',
-                  fontFamily: 'monospace',
-                  fontSize: '10px',
-                  color: 'white',
-                  wordBreak: 'break-all',
-                  border: '1px dashed rgba(255,255,255,0.1)'
-                }}>
-                  VITE_GOOGLE_CLIENT_ID=your_id.apps.googleusercontent.com
-                </code>
-              </div>
             </div>
           </div>
         </div>
