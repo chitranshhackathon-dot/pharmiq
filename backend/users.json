@@ -1,0 +1,41 @@
+[
+  {
+    "id": "usr_admin",
+    "email": "admin@pharmiq.com",
+    "password": "$2a$10$TVdWih9LboFlrIY7cwEWZ./aAlHchRfqZ8R7sZigsIzLSYCYzNp8S",
+    "username": "Dr. Ramesh (Admin)",
+    "goal": "GPAT",
+    "isPremiumUser": true,
+    "streakDays": 99,
+    "xpPoints": 9999,
+    "role": "admin",
+    "googleId": null,
+    "createdAt": "2026-05-25T14:22:31.987Z"
+  },
+  {
+    "id": "usr_1779720062412",
+    "email": "chitranshsingh2229@gmail.com",
+    "password": "$2a$10$PFvx7ZrY2dBCnd7zLksYGuQ7TV119wwKA0xWA52E9dNqiNfJBGL/u",
+    "username": "chitransh singh",
+    "goal": "GPAT",
+    "isPremiumUser": false,
+    "streakDays": 2,
+    "xpPoints": 100,
+    "role": "student",
+    "googleId": null,
+    "createdAt": "2026-05-25T14:41:02.412Z"
+  },
+  {
+    "id": "usr_1779720882900",
+    "email": "chitransh@email.com",
+    "password": "$2a$10$TKF/HE4yI..aNHhFfcmBJOFGuCjHKG1PwBRuRQrHgNOSpKohdM6xC",
+    "username": "chitransh singh",
+    "goal": "GPAT",
+    "isPremiumUser": false,
+    "streakDays": 1,
+    "xpPoints": 100,
+    "role": "student",
+    "googleId": null,
+    "createdAt": "2026-05-25T14:54:42.900Z"
+  }
+]
