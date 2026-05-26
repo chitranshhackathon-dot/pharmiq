@@ -212,3 +212,24 @@ Pharmacy students in Tier 2/3 cities lack access to quality coaching for competi
 ---
 
 *Document Owner: Product Team | Last Updated: May 25, 2026*
+##how to update
+2. 📱 Front-End UI & Design Updates (Play Store Release Flow)
+If you change the React code (like modifying the CSS, adding a new tab, or changing how the buttons look):
+
+Increment the Version Code:
+Open the file android/app/build.gradle.
+Increment the version settings (e.g., change versionCode 1 to 2, and versionName "1.0" to "1.1").
+Compile the new Bundle:
+Run your standard build commands:
+powershell
+npm run build
+npx cap sync android
+cd android
+.\gradlew bundleRelease
+Upload to Google Play Console:
+Log into your Google Play Console, go to your app, and upload the new .aab file under Releases.
+Once Google approves it (usually takes 4–24 hours), your students will see the "Update" button in their Play Store app!
+🚀 3. The Superpower: "Over-The-Air" (OTA) Live Updates
+If you want to update your React front-end design without making your users download an update from the Play Store, you can integrate a free/low-cost library like Capacitor Updater or Ionic Appflow.
+
+How it works: Whenever you change your React code, the library silently downloads the new HTML/JS bundle in the background when the student opens the app. The next second, they see your new design instantly—completely bypassing Play Store review tim

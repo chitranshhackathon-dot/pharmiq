@@ -45,7 +45,7 @@ VALUES (
     'admin@pharmiq.com',
     -- Hashed value for password 'admin@001' (using bcrypt with 10 rounds)
     '$2a$10$UshjAEEZ87Vw1B8kXkQ.1OksZ6Z0m5LwO8Q1D1l0Hq4r4r4r4r4r4',
-    'Dr. Ramesh (Admin)',
+    '(Admin)',
     'GPAT',
     TRUE,
     99,

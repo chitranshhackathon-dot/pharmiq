@@ -221,6 +221,7 @@ app.post('/api/auth/signup', async (req, res) => {
       return res.status(201).json({
         message: 'Account created successfully!',
         token,
+        isNewUser: true,
         user: mapUserToFrontend(newUser)
       });
     } else {
@@ -252,6 +253,7 @@ app.post('/api/auth/signup', async (req, res) => {
       return res.status(201).json({
         message: 'Account created successfully!',
         token,
+        isNewUser: true,
         user: mapUserToFrontend(newUser)
       });
     }
@@ -299,6 +301,7 @@ app.post('/api/auth/login', async (req, res) => {
       return res.json({
         message: 'Login successful!',
         token,
+        isNewUser: false,
         user: mapUserToFrontend(updatedUser || user)
       });
     } else {
@@ -320,6 +323,7 @@ app.post('/api/auth/login', async (req, res) => {
       return res.json({
         message: 'Login successful!',
         token,
+        isNewUser: false,
         user: mapUserToFrontend(user)
       });
     }
@@ -369,7 +373,9 @@ app.post('/api/auth/google', async (req, res) => {
         .or(`google_id.eq.${googleId},email.eq.${normalizedEmail}`)
         .maybeSingle();
 
+      let isNewUser = false;
       if (!user) {
+        isNewUser = true;
         // Create new account in Supabase
         const { data: newUser, error: insertError } = await supabase
           .from('users')
@@ -377,7 +383,7 @@ app.post('/api/auth/google', async (req, res) => {
             email: normalizedEmail,
             password: null,
             username: name || 'Google Student',
-            goal: goal || 'GPAT',
+            goal: goal || '',
             is_premium_user: false,
             streak_days: 1,
             xp_points: 150,
@@ -409,18 +415,21 @@ app.post('/api/auth/google', async (req, res) => {
       return res.json({
         message: 'Google login successful!',
         token,
+        isNewUser,
         user: mapUserToFrontend(user)
       });
     } else {
       // Local Fallback Flow
       let user = localUsers.find(u => u.googleId === googleId || u.email === normalizedEmail);
+      let isNewUser = false;
       if (!user) {
+        isNewUser = true;
         user = {
           id: `usr_${Date.now()}`,
           email: normalizedEmail,
           password: null,
           username: name || 'Google Student',
-          goal: goal || 'GPAT',
+          goal: goal || '',
           isPremiumUser: false,
           streakDays: 1,
           xpPoints: 150,
@@ -440,6 +449,7 @@ app.post('/api/auth/google', async (req, res) => {
       return res.json({
         message: 'Google login successful!',
         token,
+        isNewUser,
         user: mapUserToFrontend(user)
       });
     }
@@ -482,153 +492,233 @@ app.post('/api/user/update-premium', async (req, res) => {
   }
 });
 
+// UPDATE USER GOAL ENDPOINT
+app.post('/api/user/update-goal', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ error: 'Unauthorized' });
+    
+    const token = authHeader.split(' ')[1];
+    const decoded = jwt.verify(token, JWT_SECRET);
+    
+    const { goal } = req.body;
+    if (!goal) return res.status(400).json({ error: 'Goal parameter is required' });
+    
+    if (isSupabaseConfigured) {
+      const { data: user, error } = await supabase
+        .from('users')
+        .update({ goal: goal })
+        .eq('id', decoded.userId)
+        .select()
+        .single();
+        
+      if (error || !user) return res.status(404).json({ error: 'User not found' });
+      return res.json({ success: true, goal: user.goal });
+    } else {
+      const user = localUsers.find(u => u.id === decoded.userId);
+      if (!user) return res.status(404).json({ error: 'User not found' });
+      
+      user.goal = goal;
+      saveLocalUsers(localUsers);
+      return res.json({ success: true, goal: user.goal });
+    }
+  } catch (err) {
+    console.error('Update goal error:', err);
+    res.status(401).json({ error: 'Invalid Session' });
+  }
+});
+
 // ---------------------------------------------------------
-// LIVE CLASSROOM BROADCAST SYNC ENDPOINTS
+// LIVE CLASSROOM BROADCAST SYNC ENDPOINTS (REMOVED)
 // ---------------------------------------------------------
-let activeLiveSessions = [];
-
-// Fetch active live classrooms list
-app.get('/api/live-sessions', (req, res) => {
-  res.json(activeLiveSessions);
-});
-
-// Broadcast new active live classroom
-app.post('/api/live-sessions', (req, res) => {
-  const session = req.body;
-  if (!session || !session.id || !session.title) {
-    return res.status(400).json({ error: 'Valid session ID and Title are required.' });
-  }
-  // Remove preexisting duplicate active sessions
-  activeLiveSessions = activeLiveSessions.filter(s => s.id !== session.id);
-  activeLiveSessions.unshift(session);
-  res.status(201).json({ success: true, session });
-});
-
-// Remove broadcast classroom when faculty ends streaming
-app.delete('/api/live-sessions/:id', (req, res) => {
-  const { id } = req.params;
-  activeLiveSessions = activeLiveSessions.filter(s => s.id !== id);
-  // Clean up session chats
-  delete liveSessionChats[id];
-  res.json({ success: true, message: 'Classroom live session ended.' });
-});
-
-// Active live session chat store
-let liveSessionChats = {};
-
-// Fetch active chat messages for a specific session
-app.get('/api/live-sessions/:id/chat', (req, res) => {
-  const { id } = req.params;
-  const chats = liveSessionChats[id] || [
-    { id: 'sys_1', sender: 'System Bot', text: 'Welcome to your live class. Chat is active!', role: 'system', timestamp: Date.now() - 60000 }
-  ];
-  res.json(chats);
-});
-
-// Post a new chat message for a specific session
-app.post('/api/live-sessions/:id/chat', (req, res) => {
-  const { id } = req.params;
-  const { sender, text, role } = req.body;
-  if (!sender || !text) {
-    return res.status(400).json({ error: 'Sender and text are required.' });
-  }
-
-  if (!liveSessionChats[id]) {
-    liveSessionChats[id] = [
-      { id: 'sys_1', sender: 'System Bot', text: 'Welcome to your live class. Chat is active!', role: 'system', timestamp: Date.now() - 60000 }
-    ];
-  }
-
-  const newMessage = {
-    id: `msg_${Date.now()}_${Math.random()}`,
-    sender,
-    text,
-    role: role || 'student',
-    timestamp: Date.now()
-  };
-
-  liveSessionChats[id].push(newMessage);
-  res.status(201).json({ success: true, message: newMessage });
-});
-
-// Active classroom live frames registry
-let liveSessionFrames = {};
-
-// Fetch active live frame
-app.get('/api/live-sessions/:id/frame', (req, res) => {
-  const { id } = req.params;
-  const frame = liveSessionFrames[id] || '';
-  res.json({ frame });
-});
-
-// Post live stream frame
-app.post('/api/live-sessions/:id/frame', (req, res) => {
-  const { id } = req.params;
-  const { frame } = req.body;
-  liveSessionFrames[id] = frame || '';
-  res.json({ success: true });
-});
 
 // Persistent dynamic list stores
 let dynamicLectures = [];
 let dynamicMaterials = [];
 let dynamicQuestions = [];
 
+let dynamicBatches = [
+  { id: 'bat_1', name: 'GPAT' }
+];
+
+let dynamicSubjects = [
+  { id: 'sub_1', name: 'Pharmacology', batchId: 'bat_1' },
+  { id: 'sub_2', name: 'Pharmaceutics', batchId: 'bat_1' },
+  { id: 'sub_3', name: 'Medicinal Chemistry', batchId: 'bat_1' },
+  { id: 'sub_4', name: 'Pharmacognosy', batchId: 'bat_1' },
+  { id: 'sub_5', name: 'Jurisprudence', batchId: 'bat_1' }
+];
+
+// Batches CRUD
+app.get('/api/batches', async (req, res) => {
+  if (isSupabaseConfigured) {
+    const { data, error } = await supabase.from('batches').select('*').order('created_at', { ascending: false });
+    if (!error && data) return res.json(data);
+  }
+  res.json(dynamicBatches);
+});
+
+app.post('/api/batches', async (req, res) => {
+  const batch = req.body;
+  if (!batch || !batch.id || !batch.name) return res.status(400).json({ error: 'Valid batch object required' });
+  
+  if (isSupabaseConfigured) {
+    const { data, error } = await supabase.from('batches').upsert({ id: batch.id, name: batch.name }).select().single();
+    if (!error && data) return res.status(201).json({ success: true, batch: data });
+  }
+  dynamicBatches = dynamicBatches.filter(b => b.id !== batch.id);
+  dynamicBatches.push(batch);
+  res.status(201).json({ success: true, batch });
+});
+
+app.delete('/api/batches/:id', async (req, res) => {
+  if (isSupabaseConfigured) await supabase.from('batches').delete().eq('id', req.params.id);
+  dynamicBatches = dynamicBatches.filter(b => b.id !== req.params.id);
+  res.json({ success: true, message: 'Batch deleted' });
+});
+
+// Subjects CRUD
+app.get('/api/subjects', async (req, res) => {
+  if (isSupabaseConfigured) {
+    const { data, error } = await supabase.from('subjects').select('*').order('created_at', { ascending: false });
+    if (!error && data) {
+      // Map back from snake_case to camelCase
+      const mapped = data.map(s => ({ id: s.id, name: s.name, batchId: s.batch_id }));
+      return res.json(mapped);
+    }
+  }
+  res.json(dynamicSubjects);
+});
+
+app.post('/api/subjects', async (req, res) => {
+  const subject = req.body;
+  if (!subject || !subject.id || !subject.name || !subject.batchId) return res.status(400).json({ error: 'Valid subject object with batchId required' });
+  
+  if (isSupabaseConfigured) {
+    const { data, error } = await supabase.from('subjects').upsert({ id: subject.id, name: subject.name, batch_id: subject.batchId }).select().single();
+    if (!error && data) return res.status(201).json({ success: true, subject: { id: data.id, name: data.name, batchId: data.batch_id } });
+  }
+  dynamicSubjects = dynamicSubjects.filter(s => s.id !== subject.id);
+  dynamicSubjects.push(subject);
+  res.status(201).json({ success: true, subject });
+});
+
+app.delete('/api/subjects/:id', async (req, res) => {
+  if (isSupabaseConfigured) await supabase.from('subjects').delete().eq('id', req.params.id);
+  dynamicSubjects = dynamicSubjects.filter(s => s.id !== req.params.id);
+  res.json({ success: true, message: 'Subject deleted' });
+});
+
 // Video Lectures CRUD
-app.get('/api/lectures', (req, res) => {
+app.get('/api/lectures', async (req, res) => {
+  if (isSupabaseConfigured) {
+    const { data, error } = await supabase.from('lectures').select('*').order('created_at', { ascending: false });
+    if (!error && data) {
+      const mapped = data.map(l => ({
+        id: l.id, title: l.title, subject: l.subject, duration: l.duration,
+        instructor: l.instructor, videoUrl: l.video_url, views: l.views,
+        isPremium: l.is_premium, attachmentName: l.attachment_name,
+        attachmentSize: l.attachment_size, attachmentType: l.attachment_type,
+        goal: l.goal, batch: l.batch, fileUrl: l.file_url
+      }));
+      return res.json(mapped);
+    }
+  }
   res.json(dynamicLectures);
 });
 
-app.post('/api/lectures', (req, res) => {
+app.post('/api/lectures', async (req, res) => {
   const lecture = req.body;
-  if (!lecture || !lecture.id || !lecture.title) {
-    return res.status(400).json({ error: 'Valid lecture object is required.' });
+  if (!lecture || !lecture.id || !lecture.title) return res.status(400).json({ error: 'Valid lecture object is required.' });
+  
+  if (isSupabaseConfigured) {
+    const { data, error } = await supabase.from('lectures').upsert({
+      id: lecture.id, title: lecture.title, subject: lecture.subject, duration: lecture.duration,
+      instructor: lecture.instructor, video_url: lecture.videoUrl, views: lecture.views,
+      is_premium: lecture.isPremium, attachment_name: lecture.attachmentName,
+      attachment_size: lecture.attachmentSize, attachment_type: lecture.attachmentType,
+      goal: lecture.goal, batch: lecture.batch, file_url: lecture.fileUrl
+    }).select().single();
+    if (!error && data) return res.status(201).json({ success: true, lecture });
   }
-  // Prevent duplicate additions
   dynamicLectures = dynamicLectures.filter(l => l.id !== lecture.id);
   dynamicLectures.unshift(lecture);
   res.status(201).json({ success: true, lecture });
 });
 
-app.delete('/api/lectures/:id', (req, res) => {
-  const { id } = req.params;
-  dynamicLectures = dynamicLectures.filter(l => l.id !== id);
+app.delete('/api/lectures/:id', async (req, res) => {
+  if (isSupabaseConfigured) await supabase.from('lectures').delete().eq('id', req.params.id);
+  dynamicLectures = dynamicLectures.filter(l => l.id !== req.params.id);
   res.json({ success: true, message: 'Lecture deleted successfully.' });
 });
 
 // Study Materials CRUD
-app.get('/api/materials', (req, res) => {
+app.get('/api/materials', async (req, res) => {
+  if (isSupabaseConfigured) {
+    const { data, error } = await supabase.from('materials').select('*').order('created_at', { ascending: false });
+    if (!error && data) {
+      const mapped = data.map(m => ({
+        id: m.id, title: m.title, type: m.type, size: m.size,
+        subject: m.subject, isPremium: m.is_premium,
+        goal: m.goal, batch: m.batch, fileUrl: m.file_url
+      }));
+      return res.json(mapped);
+    }
+  }
   res.json(dynamicMaterials);
 });
 
-app.post('/api/materials', (req, res) => {
+app.post('/api/materials', async (req, res) => {
   const material = req.body;
-  if (!material || !material.id || !material.title) {
-    return res.status(400).json({ error: 'Valid material object is required.' });
+  if (!material || !material.id || !material.title) return res.status(400).json({ error: 'Valid material object is required.' });
+  
+  if (isSupabaseConfigured) {
+    const { data, error } = await supabase.from('materials').upsert({
+      id: material.id, title: material.title, type: material.type, size: material.size,
+      subject: material.subject, is_premium: material.isPremium,
+      goal: material.goal, batch: material.batch, file_url: material.fileUrl
+    }).select().single();
+    if (!error && data) return res.status(201).json({ success: true, material });
   }
-  // Prevent duplicate additions
   dynamicMaterials = dynamicMaterials.filter(m => m.id !== material.id);
   dynamicMaterials.unshift(material);
   res.status(201).json({ success: true, material });
 });
 
-app.delete('/api/materials/:id', (req, res) => {
-  const { id } = req.params;
-  dynamicMaterials = dynamicMaterials.filter(m => m.id !== id);
+app.delete('/api/materials/:id', async (req, res) => {
+  if (isSupabaseConfigured) await supabase.from('materials').delete().eq('id', req.params.id);
+  dynamicMaterials = dynamicMaterials.filter(m => m.id !== req.params.id);
   res.json({ success: true, message: 'Study material notes deleted successfully.' });
 });
 
 // Quiz Questions CRUD
-app.get('/api/questions', (req, res) => {
+app.get('/api/questions', async (req, res) => {
+  if (isSupabaseConfigured) {
+    const { data, error } = await supabase.from('questions').select('*').order('created_at', { ascending: true });
+    if (!error && data) {
+      const mapped = data.map(q => ({
+        id: q.id, question: q.question, options: q.options,
+        correctIndex: q.correct_index, explanation: q.explanation,
+        subject: q.subject, goal: q.goal, batch: q.batch
+      }));
+      return res.json(mapped);
+    }
+  }
   res.json(dynamicQuestions);
 });
 
-app.post('/api/questions', (req, res) => {
+app.post('/api/questions', async (req, res) => {
   const question = req.body;
-  if (!question || !question.id || !question.question) {
-    return res.status(400).json({ error: 'Valid question object is required.' });
+  if (!question || !question.id || !question.question) return res.status(400).json({ error: 'Valid question object is required.' });
+  
+  if (isSupabaseConfigured) {
+    const { data, error } = await supabase.from('questions').upsert({
+      id: question.id, question: question.question, options: question.options,
+      correct_index: question.correctIndex, explanation: question.explanation,
+      subject: question.subject, goal: question.goal, batch: question.batch
+    }).select().single();
+    if (!error && data) return res.status(201).json({ success: true, question });
   }
-  // Prevent duplicate additions
   dynamicQuestions = dynamicQuestions.filter(q => q.id !== question.id);
   dynamicQuestions.push(question);
   res.status(201).json({ success: true, question });
@@ -738,34 +828,109 @@ app.post('/api/ai/solve', async (req, res) => {
 });
 
 // Admin panel: Student Profiles & Enrollments Management Endpoints
-app.get('/api/admin/users', (req, res) => {
-  const studentList = localUsers.map(u => ({
-    id: u.id,
-    username: u.username,
-    email: u.email,
-    role: u.role || 'student',
-    isPremiumUser: u.isPremiumUser || false,
-    goal: u.goal || 'GPAT',
-    xp: u.xp || Math.floor(150 + Math.random() * 800),
-    streak: u.streak || Math.floor(1 + Math.random() * 15)
-  }));
-  res.json(studentList);
+app.get('/api/admin/users', async (req, res) => {
+  try {
+    if (isSupabaseConfigured) {
+      const { data: users, error } = await supabase.from('users').select('*');
+      if (error) throw error;
+      const studentList = users.map(u => ({
+        id: u.id,
+        username: u.username || 'Student',
+        email: u.email,
+        role: u.role || 'student',
+        isPremiumUser: u.is_premium_user || false,
+        goal: u.goal || 'GPAT',
+        batch: u.batch || '',
+        xp: u.xp_points || 150,
+        streak: u.streak_days || 1
+      }));
+      return res.json(studentList);
+    } else {
+      const studentList = localUsers.map(u => ({
+        id: u.id,
+        username: u.username,
+        email: u.email,
+        role: u.role || 'student',
+        isPremiumUser: u.isPremiumUser || false,
+        goal: u.goal || 'GPAT',
+        batch: u.batch || '',
+        xp: u.xpPoints || 150,
+        streak: u.streakDays || 1
+      }));
+      return res.json(studentList);
+    }
+  } catch (err) {
+    console.error('Error fetching admin users:', err);
+    res.status(500).json({ error: 'Failed to fetch student profiles.' });
+  }
 });
 
-app.post('/api/admin/users/:id', (req, res) => {
-  const { id } = req.params;
-  const { isPremiumUser, goal, username } = req.body;
-  const user = localUsers.find(u => u.id === id);
-  if (!user) {
-    return res.status(404).json({ error: 'User not found' });
+app.post('/api/admin/users/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isPremiumUser, goal, username, batch } = req.body;
+    
+    if (isSupabaseConfigured) {
+      const updates = {};
+      if (isPremiumUser !== undefined) updates.is_premium_user = isPremiumUser;
+      if (goal !== undefined) updates.goal = goal;
+      if (username !== undefined) updates.username = username;
+      if (batch !== undefined) updates.batch = batch;
+      
+      const { data: updatedUser, error } = await supabase
+        .from('users')
+        .update(updates)
+        .eq('id', id)
+        .select()
+        .single();
+        
+      if (error || !updatedUser) return res.status(404).json({ error: 'User not found' });
+      return res.json({ success: true, user: updatedUser });
+    } else {
+      const user = localUsers.find(u => u.id === id);
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      if (isPremiumUser !== undefined) user.isPremiumUser = isPremiumUser;
+      if (goal !== undefined) user.goal = goal;
+      if (username !== undefined) user.username = username;
+      if (batch !== undefined) user.batch = batch;
+
+      saveLocalUsers(localUsers);
+      return res.json({ success: true, user });
+    }
+  } catch (err) {
+    console.error('Error updating user:', err);
+    res.status(500).json({ error: 'Failed to update user.' });
   }
+});
 
-  if (isPremiumUser !== undefined) user.isPremiumUser = isPremiumUser;
-  if (goal !== undefined) user.goal = goal;
-  if (username !== undefined) user.username = username;
-
-  saveLocalUsers(localUsers);
-  res.json({ success: true, user });
+app.delete('/api/admin/users/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    if (isSupabaseConfigured) {
+      const { error } = await supabase
+        .from('users')
+        .delete()
+        .eq('id', id);
+        
+      if (error) return res.status(500).json({ error: 'Failed to delete user' });
+      return res.json({ success: true, message: 'User deleted' });
+    } else {
+      const userIndex = localUsers.findIndex(u => u.id === id);
+      if (userIndex === -1) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      localUsers.splice(userIndex, 1);
+      saveLocalUsers(localUsers);
+      return res.json({ success: true, message: 'User deleted' });
+    }
+  } catch (err) {
+    console.error('Error deleting user:', err);
+    res.status(500).json({ error: 'Failed to delete user.' });
+  }
 });
 
 // Start Server

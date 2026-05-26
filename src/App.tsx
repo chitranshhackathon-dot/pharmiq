@@ -1,8 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   BookOpen, 
   Play, 
-  Video, 
   HelpCircle, 
   Download, 
   TrendingUp, 
@@ -26,6 +25,11 @@ import {
   AlertCircle,
   X
 } from 'lucide-react';
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+const supabaseKey = import.meta.env.VITE_SUPABASE_KEY || '';
+const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
 
 // ==========================================
 // MOCK DATA FOR PHARMIQ PLATFORM
@@ -44,17 +48,8 @@ interface VideoLecture {
   attachmentSize?: string;
   attachmentType?: string;
   goal?: string;
-}
-
-interface LiveSession {
-  id: string;
-  title: string;
-  subject: string;
-  instructor: string;
-  time: string;
-  isLive: boolean;
-  activeWatchers: number;
-  slides: { title: string; content: string[] }[];
+  batch?: string;
+  fileUrl?: string;
 }
 
 interface QuizQuestion {
@@ -65,6 +60,7 @@ interface QuizQuestion {
   explanation: string;
   subject: string;
   goal?: string;
+  batch?: string;
 }
 
 interface StudyMaterial {
@@ -75,6 +71,8 @@ interface StudyMaterial {
   subject: string;
   isPremium: boolean;
   goal?: string;
+  batch?: string;
+  fileUrl?: string;
 }
 
 interface DoubtItem {
@@ -87,7 +85,7 @@ interface DoubtItem {
 }
 
 const INITIAL_LECTURES: VideoLecture[] = [];
-const INITIAL_LIVE_SESSIONS: LiveSession[] = [];
+
 const INITIAL_QUIZ: QuizQuestion[] = [];
 const INITIAL_STUDY_MATERIALS: StudyMaterial[] = [];
 const INITIAL_DOUBTS: DoubtItem[] = [];;
@@ -97,19 +95,22 @@ export default function App() {
   // CORE APP STATES
   // ==========================================
   const [onboarded, setOnboarded] = useState<boolean>(() => {
-    return localStorage.getItem('pharmiq_token') !== null;
+    return localStorage.getItem('pharmiq_token') !== null && localStorage.getItem('pharmiq_onboarded') === 'true';
   });
   const [username, setUsername] = useState<string>(() => {
     return localStorage.getItem('pharmiq_username') || '';
   });
   const [selectedGoal, setSelectedGoal] = useState<string>(() => {
-    return localStorage.getItem('pharmiq_goal') || 'GPAT';
+    return localStorage.getItem('pharmiq_goal') || '';
   });
   const [isPremiumUser, setIsPremiumUser] = useState<boolean>(() => {
     return localStorage.getItem('pharmiq_premium') === 'true';
   });
   const [userRole, setUserRole] = useState<string>(() => {
     return localStorage.getItem('pharmiq_role') || 'student';
+  });
+  const [userBatch, setUserBatch] = useState<string>(() => {
+    return localStorage.getItem('pharmiq_batch') || '';
   });
 
   // ==========================================
@@ -176,31 +177,51 @@ export default function App() {
       const res = await fetch(getApiUrl('/api/auth/google'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ credential: response.credential, goal: selectedGoal }),
+        body: JSON.stringify({ credential: response.credential, goal: selectedGoal || '' }),
       });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.error || 'Google login failed');
       }
       
-      localStorage.setItem('pharmiq_token', data.token);
-      localStorage.setItem('pharmiq_username', data.user.username);
-      localStorage.setItem('pharmiq_goal', data.user.goal);
-      localStorage.setItem('pharmiq_premium', data.user.isPremiumUser ? 'true' : 'false');
-      localStorage.setItem('pharmiq_role', data.user.role || 'student');
+      if (!data || !data.token || !data.user) {
+        throw new Error('Invalid authentication response from server.');
+      }
       
-      setToken(data.token);
-      setUsername(data.user.username);
-      setSelectedGoal(data.user.goal);
-      setIsPremiumUser(data.user.isPremiumUser);
-      setUserRole(data.user.role || 'student');
-      setStreakDays(data.user.streakDays);
-      setXpPoints(data.user.xpPoints);
-      setOnboarded(true);
+      const userToken = data.token;
+      const userObj = data.user;
+      const userUsername = userObj.username || 'Google Student';
+      const userGoal = userObj.goal || selectedGoal || '';
+      const userBatchValue = userObj.batch || '';
+      const userPremium = userObj.isPremiumUser ?? false;
+      const userRoleStr = userObj.role || 'student';
+      const userStreak = userObj.streakDays ?? 1;
+      const userXp = userObj.xpPoints ?? 100;
+      
+      localStorage.setItem('pharmiq_token', userToken);
+      localStorage.setItem('pharmiq_username', userUsername);
+      localStorage.setItem('pharmiq_goal', userGoal);
+      localStorage.setItem('pharmiq_batch', userBatchValue);
+      localStorage.setItem('pharmiq_premium', userPremium ? 'true' : 'false');
+      localStorage.setItem('pharmiq_role', userRoleStr);
+      
+      setToken(userToken);
+      setUsername(userUsername);
+      setSelectedGoal(userGoal);
+      setUserBatch(userBatchValue);
+      setIsPremiumUser(userPremium);
+      setUserRole(userRoleStr);
+      setStreakDays(userStreak);
+      setXpPoints(userXp);
 
-      addToast(`Welcome back, ${data.user.username}!`, 'success');
+      if (data.isNewUser === false) {
+        localStorage.setItem('pharmiq_onboarded', 'true');
+        setOnboarded(true);
+      }
+
+      addToast(`Welcome back, ${userUsername}!`, 'success');
     } catch (err: any) {
-      console.error(err);
+      console.error('Google Authentication Error:', err);
       setAuthError(err.message || 'Google Auth Connection Error. Please verify server.');
     } finally {
       setAuthLoading(false);
@@ -222,7 +243,7 @@ export default function App() {
     setAuthError(null);
     const endpoint = authMode === 'signup' ? 'signup' : 'login';
     const payload = authMode === 'signup'
-      ? { email: authEmail, password: authPassword, username, goal: selectedGoal }
+      ? { email: authEmail, password: authPassword, username, goal: selectedGoal || '' }
       : { email: authEmail, password: authPassword };
 
     try {
@@ -236,24 +257,44 @@ export default function App() {
         throw new Error(data.error || 'Authentication failed');
       }
 
-      localStorage.setItem('pharmiq_token', data.token);
-      localStorage.setItem('pharmiq_username', data.user.username);
-      localStorage.setItem('pharmiq_goal', data.user.goal);
-      localStorage.setItem('pharmiq_premium', data.user.isPremiumUser ? 'true' : 'false');
-      localStorage.setItem('pharmiq_role', data.user.role || 'student');
+      if (!data || !data.token || !data.user) {
+        throw new Error('Invalid authentication response from server.');
+      }
 
-      setToken(data.token);
-      setUsername(data.user.username);
-      setSelectedGoal(data.user.goal);
-      setIsPremiumUser(data.user.isPremiumUser);
-      setUserRole(data.user.role || 'student');
-      setStreakDays(data.user.streakDays);
-      setXpPoints(data.user.xpPoints);
-      setOnboarded(true);
+      const userToken = data.token;
+      const userObj = data.user;
+      const userUsername = userObj.username || username || 'Student';
+      const userGoal = userObj.goal || selectedGoal || '';
+      const userBatchValue = userObj.batch || '';
+      const userPremium = userObj.isPremiumUser ?? false;
+      const userRoleStr = userObj.role || 'student';
+      const userStreak = userObj.streakDays ?? 1;
+      const userXp = userObj.xpPoints ?? 150;
+
+      localStorage.setItem('pharmiq_token', userToken);
+      localStorage.setItem('pharmiq_username', userUsername);
+      localStorage.setItem('pharmiq_goal', userGoal);
+      localStorage.setItem('pharmiq_batch', userBatchValue);
+      localStorage.setItem('pharmiq_premium', userPremium ? 'true' : 'false');
+      localStorage.setItem('pharmiq_role', userRoleStr);
+
+      setToken(userToken);
+      setUsername(userUsername);
+      setSelectedGoal(userGoal);
+      setUserBatch(userBatchValue);
+      setIsPremiumUser(userPremium);
+      setUserRole(userRoleStr);
+      setStreakDays(userStreak);
+      setXpPoints(userXp);
+
+      if (data.isNewUser === false) {
+        localStorage.setItem('pharmiq_onboarded', 'true');
+        setOnboarded(true);
+      }
 
       addToast(authMode === 'signup' ? 'Account created successfully!' : 'Logged in successfully!', 'success');
     } catch (err: any) {
-      console.error(err);
+      console.error('Credentials Authentication Error:', err);
       setAuthError(err.message || 'Server connection failed. Is your backend running?');
     } finally {
       setAuthLoading(false);
@@ -267,7 +308,7 @@ export default function App() {
   // EXTENSIBLE / MUTABLE DATA IN MEMORY (ADMIN MUTATION)
   // ==========================================
   const [lectures, setLectures] = useState<VideoLecture[]>(INITIAL_LECTURES);
-  const [liveSessions, setLiveSessions] = useState<LiveSession[]>(INITIAL_LIVE_SESSIONS);
+
   const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>(INITIAL_QUIZ);
   const [studyMaterials, setStudyMaterials] = useState<StudyMaterial[]>(INITIAL_STUDY_MATERIALS);
   const [doubtList, setDoubtList] = useState<DoubtItem[]>(INITIAL_DOUBTS);
@@ -283,19 +324,7 @@ export default function App() {
   const [newNoteText, setNewNoteText] = useState<string>('');
   const [lectureSearch, setLectureSearch] = useState<string>('');
 
-  // ==========================================
-  // LIVE STREAM INTERACTIVE STATES
-  // ==========================================
-  const [showLiveStreamView, setShowLiveStreamView] = useState<boolean>(false);
-  const [activeLiveSession, setActiveLiveSession] = useState<LiveSession | null>(null);
-  const [activeSlideIndex, setActiveSlideIndex] = useState<number>(0);
-  const [streamComments, setStreamComments] = useState<{ id: string; user: string; text: string; role?: string }[]>([
-    { id: 'c1', user: 'System Bot', text: 'Welcome to your live class. Chat is active!', role: 'System' }
-  ]);
-  const [newStreamComment, setNewStreamComment] = useState<string>('');
-  const [floatingHearts, setFloatingHearts] = useState<{ id: number; style: React.CSSProperties; emoji: string }[]>([]);
-  const [isHandRaised, setIsHandRaised] = useState<boolean>(false);
-  const [remoteFrame, setRemoteFrame] = useState<string | null>(null);
+
   const [showGoalModal, setShowGoalModal] = useState<boolean>(false);
   const [studentProfiles, setStudentProfiles] = useState<{
     id: string;
@@ -314,9 +343,7 @@ export default function App() {
   const [viewedLectureIds, setViewedLectureIds] = useState<string[]>(() => {
     return JSON.parse(localStorage.getItem('pharmiq_viewed_lec_ids') || '[]');
   });
-  const [joinedStreamIds, setJoinedStreamIds] = useState<string[]>(() => {
-    return JSON.parse(localStorage.getItem('pharmiq_joined_stream_ids') || '[]');
-  });
+
   const [aiDoubtsAskedCount, setAiDoubtsAskedCount] = useState<number>(() => {
     return Number(localStorage.getItem('pharmiq_ai_doubts') || '0');
   });
@@ -348,19 +375,17 @@ export default function App() {
   const [adminLectureDuration, setAdminLectureDuration] = useState<string>('45 min');
   const [adminLecturePremium, setAdminLecturePremium] = useState<boolean>(false);
   const [adminLectureFileName, setAdminLectureFileName] = useState<string>('');
+  const [adminLectureFile, setAdminLectureFile] = useState<File | null>(null);
+  const [isUploading, setIsUploading] = useState<boolean>(false);
 
-  // ==========================================
-  // WEBRTC REAL CAMERA BROADCASTING STATES
-  // ==========================================
-  const [liveStreamObj, setLiveStreamObj] = useState<MediaStream | null>(null);
-  const [liveStreamDevices, setLiveStreamDevices] = useState<MediaDeviceInfo[]>([]);
-  const [activeVideoDevice, setActiveVideoDevice] = useState<string>('');
-  const [isCameraMuted, setIsCameraMuted] = useState<boolean>(false);
-  const [isMicMuted, setIsMicMuted] = useState<boolean>(false);
+  const [adminBatches, setAdminBatches] = useState<{ id: string; name: string }[]>([]);
+  const [adminSubjects, setAdminSubjects] = useState<{ id: string; name: string; batchId: string }[]>([]);
+  const [adminNewBatch, setAdminNewBatch] = useState<string>('');
+  const [adminNewSubject, setAdminNewSubject] = useState<string>('');
+  const [adminNewSubjectBatchId, setAdminNewSubjectBatchId] = useState<string>('');
 
-  const peerRef = useRef<any>(null);
-  const activeCallRef = useRef<any>(null);
-  const liveVideoRef = useRef<HTMLVideoElement | null>(null);
+  const [adminLectureBatch, setAdminLectureBatch] = useState<string>('');
+  const [adminQuestionBatch, setAdminQuestionBatch] = useState<string>('');
 
   const [adminQuestionText, setAdminQuestionText] = useState<string>('');
   const [adminQuestionOptA, setAdminQuestionOptA] = useState<string>('');
@@ -371,10 +396,7 @@ export default function App() {
   const [adminQuestionExpl, setAdminQuestionExpl] = useState<string>('');
   const [adminQuestionSubject, setAdminQuestionSubject] = useState<string>('Pharmacology');
 
-  const [adminLiveTitle, setAdminLiveTitle] = useState<string>('');
-  const [adminLiveSubject, setAdminLiveSubject] = useState<string>('Pharmacology');
-  const [adminLiveTeacher, setAdminLiveTeacher] = useState<string>('Dr. Ramesh Kumar');
-  const [adminLiveSlides, setAdminLiveSlides] = useState<string>('Slide 1 Title:\n- Bullet point 1\n- Bullet point 2');
+
 
   // ==========================================
   // STREAK & MOTIVATION STATE
@@ -393,113 +415,7 @@ export default function App() {
       setToasts(prev => prev.filter(t => t.id !== id));
     }, 4000);
   };
-  const fetchLiveSessions = async () => {
-    try {
-      const res = await fetch(getApiUrl('/api/live-sessions'));
-      if (res.ok) {
-        const data = await res.json();
-        setLiveSessions(data);
-      }
-    } catch (err) {
-      console.error('Error fetching live sessions:', err);
-    }
-  };
 
-  // Real-time synchronization polling hook
-  useEffect(() => {
-    fetchLiveSessions();
-    const interval = setInterval(fetchLiveSessions, 3000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // Dynamic WebRTC Local/Remote Stream Media Renderer Hook
-  useEffect(() => {
-    if (liveVideoRef.current) {
-      if (liveStreamObj) {
-        liveVideoRef.current.srcObject = liveStreamObj;
-        liveVideoRef.current.play().catch(err => {
-          console.warn('Autoplay block triggered or camera device initializing:', err);
-        });
-      } else {
-        liveVideoRef.current.srcObject = null;
-      }
-    }
-  }, [liveStreamObj]);
-
-  // Synchronized classroom live chat effect
-  useEffect(() => {
-    let interval: any;
-    if (showLiveStreamView && activeLiveSession) {
-      const fetchChats = () => {
-        fetch(getApiUrl(`/api/live-sessions/${activeLiveSession.id}/chat`))
-          .then(res => res.json())
-          .then(data => {
-            if (Array.isArray(data)) {
-              setStreamComments(data.map(msg => ({
-                id: msg.id,
-                user: msg.sender,
-                text: msg.text,
-                role: msg.role === 'system' ? 'System' : msg.role === 'admin' ? 'Faculty' : undefined
-              })));
-            }
-          })
-          .catch(err => console.error('Error fetching live chat:', err));
-      };
-
-      fetchChats();
-      interval = setInterval(fetchChats, 1500); // Poll chat every 1.5 seconds for extremely live responsiveness!
-    }
-    return () => clearInterval(interval);
-  }, [showLiveStreamView, activeLiveSession]);
-
-  // Synchronized classroom camera frame broadcaster / receiver loop
-  useEffect(() => {
-    let interval: any;
-    if (showLiveStreamView && activeLiveSession) {
-      if (userRole === 'admin') {
-        // ADMIN BROADCASTER: Capture webcam frame and POST to backend
-        const offscreenCanvas = document.createElement('canvas');
-        offscreenCanvas.width = 160;
-        offscreenCanvas.height = 120;
-        const ctx = offscreenCanvas.getContext('2d');
-
-        interval = setInterval(() => {
-          if (liveVideoRef.current && ctx && liveStreamObj && !isCameraMuted) {
-            try {
-              ctx.drawImage(liveVideoRef.current, 0, 0, 160, 120);
-              const frame = offscreenCanvas.toDataURL('image/jpeg', 0.45);
-              fetch(getApiUrl(`/api/live-sessions/${activeLiveSession.id}/frame`), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ frame })
-              }).catch(() => {});
-            } catch (e) {
-              // Frame draw might fail before video starts
-            }
-          }
-        }, 150); // Broadcaster frame rate: ~7 FPS (perfect balance of smoothness and zero network load)
-      } else {
-        // STUDENT RECEIVER: Poll latest frame from backend
-        const fetchFrame = () => {
-          fetch(getApiUrl(`/api/live-sessions/${activeLiveSession.id}/frame`))
-            .then(res => res.json())
-            .then(data => {
-              if (data && data.frame) {
-                setRemoteFrame(data.frame);
-              }
-            })
-            .catch(() => {});
-        };
-
-        fetchFrame();
-        interval = setInterval(fetchFrame, 150); // Polling frame rate: ~7 FPS (super smooth!)
-      }
-    } else {
-      setRemoteFrame(null);
-    }
-
-    return () => clearInterval(interval);
-  }, [showLiveStreamView, activeLiveSession, userRole, liveStreamObj, isCameraMuted]);
 
   // Load and synchronize dynamic lectures, materials, and questions
   useEffect(() => {
@@ -538,6 +454,22 @@ export default function App() {
             const merged = [...INITIAL_QUIZ.filter(q => !dynamicIds.has(q.id)), ...data];
             setQuizQuestions(merged);
           }
+        })
+        .catch(() => {});
+
+      // 4. Subjects
+      fetch(getApiUrl('/api/subjects'))
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) setAdminSubjects(data);
+        })
+        .catch(() => {});
+
+      // 5. Batches
+      fetch(getApiUrl('/api/batches'))
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) setAdminBatches(data);
         })
         .catch(() => {});
     };
@@ -594,79 +526,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isPlaying, playbackSpeed]);
 
-  // Reactive Sound Wave Dynamic Audio Analyser
-  useEffect(() => {
-    if (!liveStreamObj || isMicMuted) return;
 
-    let audioContext: AudioContext;
-    let analyser: AnalyserNode;
-    let source: MediaStreamAudioSourceNode;
-    let animationFrameId: number;
-
-    try {
-      audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-      analyser = audioContext.createAnalyser();
-      source = audioContext.createMediaStreamSource(liveStreamObj);
-      source.connect(analyser);
-
-      analyser.fftSize = 32;
-      const bufferLength = analyser.frequencyBinCount;
-      const dataArray = new Uint8Array(bufferLength);
-
-      const canvas = document.getElementById('liveAudioCanvas') as HTMLCanvasElement;
-      if (canvas) {
-        const canvasCtx = canvas.getContext('2d');
-        if (canvasCtx) {
-          const draw = () => {
-            animationFrameId = requestAnimationFrame(draw);
-            analyser.getByteFrequencyData(dataArray);
-
-            canvasCtx.fillStyle = 'rgba(15, 23, 42, 0.6)';
-            canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
-
-            const barWidth = (canvas.width / bufferLength) * 2;
-            let barHeight;
-            let x = 0;
-
-            for (let i = 0; i < bufferLength; i++) {
-              barHeight = (dataArray[i] / 255) * canvas.height * 0.95;
-
-              // Vibrant green frequency bars
-              canvasCtx.fillStyle = `rgb(52, 211, 153)`;
-              canvasCtx.fillRect(x, canvas.height - barHeight, barWidth - 3, barHeight);
-
-              x += barWidth;
-            }
-          };
-          draw();
-        }
-      }
-    } catch (e) {
-      console.warn('AudioContext visualizer setup failed', e);
-    }
-
-    return () => {
-      if (animationFrameId) cancelAnimationFrame(animationFrameId);
-      if (audioContext) audioContext.close();
-    };
-  }, [liveStreamObj, isMicMuted]);
-
-  // Floating hearts simulation
-  const triggerFloatingHeart = () => {
-    const emojis = ['❤️', '🔥', '👏', '💡', '🎓', '💊'];
-    const selectedEmoji = emojis[Math.floor(Math.random() * emojis.length)];
-    const id = Date.now() + Math.random();
-    const style: React.CSSProperties = {
-      left: `${20 + Math.random() * 60}%`,
-      animationDelay: '0s',
-      fontSize: `${18 + Math.random() * 12}px`
-    };
-    
-    setFloatingHearts(prev => [...prev, { id, style, emoji: selectedEmoji }]);
-    setTimeout(() => {
-      setFloatingHearts(prev => prev.filter(h => h.id !== id));
-    }, 3000);
-  };
 
   // Synchronized Dynamic AI Doubt Solver
   const handleAskDoubt = (e: React.FormEvent) => {
@@ -769,98 +629,94 @@ Click OK to confirm payment authorization.`);
 
 
 
-  // ==========================================
-  // WEBRTC NATIVE CAMERA AND BROADCAST STREAMING
-  // ==========================================
-  const startLiveWebcamStream = async (videoDeviceId?: string, audioDeviceId?: string) => {
+
+
+  const handleAdminAddSubject = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminNewSubject.trim() || !adminNewSubjectBatchId) {
+      addToast('Please enter subject name and select a batch', 'info');
+      return;
+    }
     try {
-      if (liveStreamObj) {
-        liveStreamObj.getTracks().forEach(track => track.stop());
+      const res = await fetch(getApiUrl('/api/subjects'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: `sub_${Date.now()}`, name: adminNewSubject, batchId: adminNewSubjectBatchId })
+      });
+      if (res.ok) {
+        addToast('Subject added successfully', 'success');
+        setAdminNewSubject('');
       }
-
-      const constraints: MediaStreamConstraints = {
-        video: videoDeviceId ? { deviceId: { exact: videoDeviceId } } : true,
-        audio: audioDeviceId ? { deviceId: { exact: audioDeviceId } } : true
-      };
-
-      addToast('Initializing webcam and media stream channels...', 'info');
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      setLiveStreamObj(stream);
-      (window as any).activeLiveStream = stream;
-
-      // Enumerate hardware devices
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const mediaDevices = devices.filter(d => d.kind === 'videoinput' || d.kind === 'audioinput');
-      setLiveStreamDevices(mediaDevices);
-
-
-      addToast('Real webcam live connection established successfully!', 'success');
-    } catch (err: any) {
-      console.error('Camera/Mic permission failed:', err);
-      addToast('Could not access camera/mic. Running in simulated slides mode.', 'info');
-    }
+    } catch (err) {}
   };
 
-  const stopLiveWebcamStream = () => {
-    if (liveStreamObj) {
-      liveStreamObj.getTracks().forEach(track => track.stop());
-      setLiveStreamObj(null);
-      (window as any).activeLiveStream = null;
-      addToast('Webcam broadcast ended. Resources released.', 'info');
-    }
-  };
-
-  const handleLeaveClassroom = () => {
-    stopLiveWebcamStream();
-
-    // End active WebRTC PeerJS call signaling connections
+  const handleAdminDeleteSubject = async (id: string) => {
     try {
-      if (activeCallRef.current) {
-        activeCallRef.current.close();
-        activeCallRef.current = null;
-      }
-      if (peerRef.current) {
-        peerRef.current.destroy();
-        peerRef.current = null;
-      }
-    } catch (e) {
-      console.error('Error cleaning up WebRTC Peer connection:', e);
-    }
-
-    // Delete classroom backend record if the user is Admin
-    if (userRole === 'admin' && activeLiveSession) {
-      fetch(getApiUrl('/api/live-sessions/' + activeLiveSession.id), { method: 'DELETE' })
-        .catch(err => console.error('Error ending live class:', err));
-    }
-
-    setShowLiveStreamView(false);
+      await fetch(getApiUrl(`/api/subjects/${id}`), { method: 'DELETE' });
+      addToast('Subject deleted', 'info');
+    } catch (err) {}
   };
 
-  const handleToggleCamera = () => {
-    if (liveStreamObj) {
-      const videoTrack = liveStreamObj.getVideoTracks()[0];
-      if (videoTrack) {
-        videoTrack.enabled = !videoTrack.enabled;
-        setIsCameraMuted(!videoTrack.enabled);
-        addToast(videoTrack.enabled ? 'Webcam active' : 'Webcam muted', 'success');
+  const handleAdminAddBatch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminNewBatch.trim()) return;
+    try {
+      const res = await fetch(getApiUrl('/api/batches'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: `bat_${Date.now()}`, name: adminNewBatch })
+      });
+      if (res.ok) {
+        addToast('Batch added successfully', 'success');
+        setAdminNewBatch('');
       }
-    }
+    } catch (err) {}
   };
 
-  const handleToggleMic = () => {
-    if (liveStreamObj) {
-      const audioTrack = liveStreamObj.getAudioTracks()[0];
-      if (audioTrack) {
-        audioTrack.enabled = !audioTrack.enabled;
-        setIsMicMuted(!audioTrack.enabled);
-        addToast(audioTrack.enabled ? 'Microphone active' : 'Microphone muted', 'success');
-      }
-    }
+  const handleAdminDeleteBatch = async (id: string) => {
+    try {
+      await fetch(getApiUrl(`/api/batches/${id}`), { method: 'DELETE' });
+      addToast('Batch deleted', 'info');
+    } catch (err) {}
   };
 
-  const handleAdminAddLecture = (e: React.FormEvent) => {
+  const handleAdminAddLecture = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!adminLectureTitle) return;
+
+    setIsUploading(true);
+    let uploadedFileUrl = '';
+    let finalFileName = adminLectureFileName;
+
+    if (adminLectureFile && supabase) {
+      addToast('Uploading file securely to Supabase Storage...', 'info');
+      try {
+        const fileExt = adminLectureFile.name.split('.').pop();
+        const safeName = adminLectureFile.name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+        const filePath = `${Date.now()}_${safeName}.${fileExt}`;
+        
+        const { error: uploadError } = await supabase.storage
+          .from('pharmiq-content')
+          .upload(filePath, adminLectureFile);
+
+        if (uploadError) {
+          throw uploadError;
+        }
+
+        const { data } = supabase.storage
+          .from('pharmiq-content')
+          .getPublicUrl(filePath);
+
+        uploadedFileUrl = data.publicUrl;
+        finalFileName = adminLectureFile.name;
+        addToast('File uploaded successfully to the cloud!', 'success');
+      } catch (err: any) {
+        console.error('Upload failed:', err);
+        addToast(`Upload failed: ${err.message}`, 'info');
+        setIsUploading(false);
+        return; // Stop if upload fails
+      }
+    }
 
     const newLec: VideoLecture = {
       id: `l_${Date.now()}`,
@@ -871,36 +727,40 @@ Click OK to confirm payment authorization.`);
       videoUrl: 'Custom dynamic lecture uploaded via Faculty Panel',
       views: '0',
       isPremium: adminLecturePremium,
-      attachmentName: adminLectureFileName || undefined,
-      attachmentSize: adminLectureFileName ? '2.4 MB' : undefined,
-      attachmentType: adminLectureFileName ? 'PDF Revision Sheet' : undefined,
-      goal: selectedGoal
+      attachmentName: finalFileName || undefined,
+      attachmentSize: finalFileName ? (adminLectureFile ? `${(adminLectureFile.size / (1024 * 1024)).toFixed(2)} MB` : '2.4 MB') : undefined,
+      attachmentType: finalFileName ? 'Document / Video' : undefined,
+      goal: selectedGoal,
+      batch: adminLectureBatch,
+      fileUrl: uploadedFileUrl || undefined
     };
 
     setLectures(prev => [newLec, ...prev]);
 
     // POST to backend sync
-    fetch(getApiUrl('/api/lectures'), {
+    await fetch(getApiUrl('/api/lectures'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newLec)
     }).catch(err => console.error('Error syncing lecture:', err));
 
     // If PDF attachment is uploaded, also link it to Reference Library / Document Section
-    if (adminLectureFileName) {
+    if (finalFileName) {
       const newMaterial: StudyMaterial = {
         id: `mat_${Date.now()}`,
-        title: `${adminLectureTitle} Notes (${adminLectureFileName})`,
-        type: 'PDF Notes',
-        size: '2.4 MB',
+        title: `${adminLectureTitle} Notes (${finalFileName})`,
+        type: 'Syllabus Attachment',
+        size: adminLectureFile ? `${(adminLectureFile.size / (1024 * 1024)).toFixed(2)} MB` : '2.4 MB',
         subject: adminLectureSubject,
         isPremium: adminLecturePremium,
-        goal: selectedGoal
+        goal: selectedGoal,
+        batch: adminLectureBatch,
+        fileUrl: uploadedFileUrl || undefined
       };
 
       setStudyMaterials(prev => [newMaterial, ...prev]);
 
-      fetch(getApiUrl('/api/materials'), {
+      await fetch(getApiUrl('/api/materials'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newMaterial)
@@ -909,6 +769,8 @@ Click OK to confirm payment authorization.`);
 
     setAdminLectureTitle('');
     setAdminLectureFileName('');
+    setAdminLectureFile(null);
+    setIsUploading(false);
     addToast('New Lecture with dynamic class syllabus notes injected!', 'success');
   };
 
@@ -926,7 +788,8 @@ Click OK to confirm payment authorization.`);
       correctIndex: Number(adminQuestionCorrect),
       explanation: adminQuestionExpl || 'No explanation provided by Faculty.',
       subject: adminQuestionSubject,
-      goal: selectedGoal
+      goal: selectedGoal,
+      batch: adminQuestionBatch
     };
 
     setQuizQuestions(prev => [...prev, newQ]);
@@ -946,10 +809,10 @@ Click OK to confirm payment authorization.`);
     setAdminQuestionOptD('');
     setAdminQuestionExpl('');
     
-    addToast('New GPAT Mock Question successfully injected!', 'success');
+    addToast('New Mock Question successfully injected!', 'success');
   };
 
-  const handleAdminUpdateUser = (userId: string, updates: { goal?: string; isPremiumUser?: boolean }) => {
+  const handleAdminUpdateUser = (userId: string, updates: { goal?: string; isPremiumUser?: boolean; batch?: string }) => {
     fetch(getApiUrl(`/api/admin/users/${userId}`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -967,6 +830,27 @@ Click OK to confirm payment authorization.`);
       .catch(err => {
         console.error('Error updating student profile:', err);
         addToast('Error updating student profile.', 'info');
+      });
+  };
+
+  const handleAdminDeleteUser = (userId: string) => {
+    if (!window.confirm('Are you sure you want to permanently delete this user? This action cannot be undone.')) return;
+    
+    fetch(getApiUrl(`/api/admin/users/${userId}`), {
+      method: 'DELETE'
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          addToast('User permanently deleted!', 'success');
+          fetchStudentProfiles();
+        } else {
+          addToast('Failed to delete user.', 'info');
+        }
+      })
+      .catch(err => {
+        console.error('Error deleting user:', err);
+        addToast('Error deleting user.', 'info');
       });
   };
 
@@ -1012,80 +896,7 @@ Click OK to confirm payment authorization.`);
       });
   };
 
-  const handleAdminSetLive = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!adminLiveTitle) return;
 
-    // Parse slides
-    const slideBlocks = adminLiveSlides.split('Slide').filter(s => s.trim());
-    const parsedSlides = slideBlocks.map((block, idx) => {
-      const lines = block.split('\n').map(l => l.trim()).filter(l => l);
-      const title = lines[0] ? lines[0].replace(/^\d+\s*Title:\s*/, '').replace(/^Title:\s*/, '') : `Slide ${idx + 1}`;
-      const content = lines.slice(1);
-      return { title, content };
-    });
-
-    const newLive: LiveSession = {
-      id: `live_${Date.now()}`,
-      title: adminLiveTitle,
-      subject: adminLiveSubject,
-      instructor: adminLiveTeacher,
-      time: 'Happening Now',
-      isLive: true,
-      activeWatchers: 50,
-      slides: parsedSlides.length > 0 ? parsedSlides : [{ title: 'Overview', content: ['No slides uploaded.'] }]
-    };
-
-    // POST newly created live session to synchronization backend
-    fetch(getApiUrl('/api/live-sessions'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newLive)
-    }).then(res => {
-      if (!res.ok) console.error('Failed to sync live session to backend');
-    }).catch(err => console.error('Error syncing live session:', err));
-
-    // Initialize WebRTC Broadcaster Peer
-    try {
-      if (peerRef.current) peerRef.current.destroy();
-      
-      const peerId = `pharmiq_${newLive.id}`;
-      const peer = new (window as any).Peer(peerId);
-      peerRef.current = peer;
-
-      peer.on('open', (id: string) => {
-        console.log('🚀 WebRTC Broadcast signaling established with ID:', id);
-      });
-
-      peer.on('call', (call: any) => {
-        console.log('Incoming WebRTC viewer connected:', call.peer);
-        const currentStream = (window as any).activeLiveStream;
-        if (currentStream) {
-          call.answer(currentStream);
-          console.log('Answered student call with local camera feed!');
-        } else {
-          // If webcam has a small delay initializing, wait a little and answer
-          setTimeout(() => {
-            const retryStream = (window as any).activeLiveStream;
-            if (retryStream) call.answer(retryStream);
-          }, 1000);
-        }
-      });
-
-      peer.on('error', (err: any) => {
-        console.error('PeerJS Broadcaster Error:', err);
-      });
-    } catch (e) {
-      console.error('Failed to start PeerJS Broadcaster:', e);
-    }
-
-    setLiveSessions(prev => [newLive, ...prev]);
-    setAdminLiveTitle('');
-    setActiveLiveSession(newLive);
-    setShowLiveStreamView(true);
-    startLiveWebcamStream();
-    addToast(`"${adminLiveTitle}" is now broadcasted LIVE!`, 'success');
-  };
 
   // Mock Question quiz answering logic
   const handleSelectOption = (idx: number) => {
@@ -1140,20 +951,64 @@ Click OK to confirm payment authorization.`);
     }, 800);
   };
 
-  // Simulated notes downloading
-  const handleDownloadMaterial = (title: string, isPremium: boolean) => {
-    if (isPremium && !isPremiumUser) {
+  // Real programmatic file download
+  const handleDownloadMaterial = (material: StudyMaterial) => {
+    if (material.isPremium && !isPremiumUser) {
       addToast('Upgrade to premium Gold tier to download this material.', 'info');
       setShowSubscriptionModal(true);
       return;
     }
-    addToast(`Preparing "${title}" download files...`, 'info');
+    
+    if (material.fileUrl) {
+      addToast(`Downloading "${material.title}" securely from cloud...`, 'info');
+      const a = document.createElement('a');
+      a.href = material.fileUrl;
+      a.download = material.title;
+      a.target = '_blank';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      addToast(`Download Complete: ${material.title}`, 'success');
+      return;
+    }
+
+    // Fallback to placeholder if no real file was uploaded
+    addToast(`Preparing "${material.title}" download files...`, 'info');
     setTimeout(() => {
-      addToast(`Download Complete: ${title}`, 'success');
+      try {
+        const content = `PHARMIQ STUDY MATERIAL\n\nDocument Title: ${material.title}\nDownloaded on: ${new Date().toLocaleString()}\n\n---\nThis is a dynamic placeholder file generated by the Pharmiq platform.\nIn a full production environment, this securely streams the actual binary PDF payload directly from your Supabase Storage buckets.`;
+        const blob = new Blob([content], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        
+        let filename = material.title;
+        if (filename.toLowerCase().endsWith('.pdf')) filename = filename.replace(/\.pdf$/i, '.txt');
+        else if (!filename.toLowerCase().endsWith('.txt')) filename += '.txt';
+        
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        addToast(`Download Complete: ${material.title}`, 'success');
+      } catch (err) {
+        addToast('Error triggering file download.', 'info');
+        console.error(err);
+      }
     }, 1200);
   };
 
-  const activeQuestions = quizQuestions.filter(q => !q.goal || q.goal === selectedGoal);
+  const activeQuestions = quizQuestions
+    .filter(q => (!q.goal || q.goal === selectedGoal) && (!q.batch || q.batch === selectedGoal || q.batch === userBatch));
+
+  const filteredLectures = lectures
+    .filter(l => (!l.goal || l.goal === selectedGoal) && (!l.batch || l.batch === selectedGoal || l.batch === userBatch));
+
+  const filteredStudyMaterials = studyMaterials
+    .filter(m => (!m.goal || m.goal === selectedGoal) && (!m.batch || m.batch === selectedGoal || m.batch === userBatch));
 
   return (
     <div className="app-wrapper">
@@ -1166,7 +1021,7 @@ Click OK to confirm payment authorization.`);
             </p>
             
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '24px' }}>
-              {['GPAT', 'NIPER', 'B.Pharm', 'D.Pharm', 'Drug Inspector', 'M.Pharm'].map((goal) => (
+              {(adminBatches.length > 0 ? adminBatches.map(b => b.name) : []).map((goal) => (
                 <div
                   key={goal}
                   style={{
@@ -1304,34 +1159,6 @@ Click OK to confirm payment authorization.`);
                 />
               </div>
 
-              {authMode === 'signup' && (
-                <div className="form-group" style={{ marginBottom: '20px' }}>
-                  <label className="form-label" style={{ fontSize: '11px' }}>Target Goal</label>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
-                    {['GPAT', 'NIPER', 'B.Pharm', 'D.Pharm', 'Drug Inspector', 'M.Pharm'].slice(0, 6).map((goal) => (
-                      <div
-                        key={goal}
-                        style={{
-                          padding: '10px 4px',
-                          borderRadius: '8px',
-                          border: '1px solid',
-                          borderColor: selectedGoal === goal ? 'var(--primary)' : 'var(--border-color)',
-                          background: selectedGoal === goal ? 'rgba(139, 92, 246, 0.1)' : 'rgba(255, 255, 255, 0.02)',
-                          cursor: 'pointer',
-                          textAlign: 'center',
-                          fontSize: '11px',
-                          fontWeight: 'bold',
-                          transition: 'var(--transition-smooth)'
-                        }}
-                        onClick={() => setSelectedGoal(goal)}
-                      >
-                        {goal}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
               <button
                 type="submit"
                 className="btn btn-primary"
@@ -1359,6 +1186,81 @@ Click OK to confirm payment authorization.`);
       )}
 
       {/* ==========================================
+        POST-LOGIN COURSE SELECTION OVERLAY
+        ========================================== */}
+      {token && !onboarded && (
+        <div className="onboarding-overlay" style={{ zIndex: 9999, backdropFilter: 'blur(20px)' }}>
+          <div className="onboarding-card glass-card fade-in-up" style={{ maxWidth: '700px', width: '90%', padding: '40px', background: 'linear-gradient(135deg, rgba(15,23,42,0.95) 0%, rgba(30,27,75,0.95) 100%)', border: '2px solid rgba(139, 92, 246, 0.3)' }}>
+            <h2 style={{ fontSize: '32px', marginBottom: '12px', color: 'white', textAlign: 'center', fontWeight: '800' }}>
+              Welcome to <span style={{ color: 'var(--primary-glow)' }}>Pharmiq</span>
+            </h2>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '15px', marginBottom: '32px', textAlign: 'center' }}>
+              To personalize your syllabus, AI solver, and MCQs, please select your primary target course.
+            </p>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px', marginBottom: '32px' }}>
+              {(adminBatches.length > 0 ? adminBatches.map(b => ({ name: b.name, desc: 'Target Batch Syllabus' })) : []).map((course) => (
+                <div
+                  key={course.name}
+                  style={{
+                    padding: '20px 16px',
+                    borderRadius: '16px',
+                    border: '2px solid',
+                    borderColor: selectedGoal === course.name ? 'var(--primary)' : 'rgba(255,255,255,0.05)',
+                    background: selectedGoal === course.name ? 'rgba(139, 92, 246, 0.2)' : 'rgba(255, 255, 255, 0.03)',
+                    cursor: 'pointer',
+                    textAlign: 'center',
+                    transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                    boxShadow: selectedGoal === course.name ? '0 0 20px rgba(139, 92, 246, 0.3)' : 'none',
+                    transform: selectedGoal === course.name ? 'translateY(-4px)' : 'none'
+                  }}
+                  onClick={() => setSelectedGoal(course.name)}
+                >
+                  <div style={{ fontSize: '18px', fontWeight: 'bold', color: selectedGoal === course.name ? 'white' : 'var(--text-primary)', marginBottom: '8px' }}>
+                    {course.name}
+                  </div>
+                  <div style={{ fontSize: '11px', color: selectedGoal === course.name ? 'rgba(255,255,255,0.9)' : 'var(--text-secondary)', lineHeight: '1.4' }}>
+                    {course.desc}
+                  </div>
+                </div>
+              ))}
+            </div>
+            
+            <button 
+              className="btn btn-primary" 
+              style={{ width: '100%', padding: '16px', fontSize: '16px', fontWeight: 'bold', borderRadius: '12px', letterSpacing: '0.5px' }} 
+              onClick={async () => {
+                if (!selectedGoal) {
+                  addToast('Please select a course to continue.', 'info');
+                  return;
+                }
+                
+                try {
+                  const res = await fetch(getApiUrl('/api/user/update-goal'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({ goal: selectedGoal })
+                  });
+                  if (res.ok) {
+                     localStorage.setItem('pharmiq_goal', selectedGoal);
+                     localStorage.setItem('pharmiq_onboarded', 'true');
+                     setOnboarded(true);
+                     addToast(`Welcome! Your dashboard is now set for ${selectedGoal}.`, 'success');
+                  } else {
+                     addToast('Failed to sync course selection to server.', 'info');
+                  }
+                } catch (e) {
+                   addToast('Network error while syncing course selection.', 'info');
+                }
+              }}
+            >
+              Confirm Course & Enter Dashboard <ArrowRight size={18} style={{ marginLeft: '8px' }} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ==========================================
         SIDEBAR NAVIGATION PANEL
         ========================================== */}
       <aside className="sidebar">
@@ -1373,7 +1275,7 @@ Click OK to confirm payment authorization.`);
         <nav className="sidebar-nav">
           <div 
             className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`}
-            onClick={() => { setActiveTab('dashboard'); setShowLiveStreamView(false); }}
+            onClick={() => { setActiveTab('dashboard'); }}
           >
             <TrendingUp size={18} />
             <span>Dashboard</span>
@@ -1381,26 +1283,15 @@ Click OK to confirm payment authorization.`);
 
           <div 
             className={`nav-item ${activeTab === 'lectures' ? 'active' : ''}`}
-            onClick={() => { setActiveTab('lectures'); setShowLiveStreamView(false); }}
+            onClick={() => { setActiveTab('lectures'); }}
           >
             <Play size={18} />
             <span>Video Lectures</span>
           </div>
 
           <div 
-            className={`nav-item ${activeTab === 'live' ? 'active' : ''}`}
-            onClick={() => { setActiveTab('live'); setShowLiveStreamView(false); }}
-          >
-            <Video size={18} />
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%' }}>
-              <span>Live Classes</span>
-              <span className="live-dot" style={{ width: '6px', height: '6px' }}></span>
-            </div>
-          </div>
-
-          <div 
             className={`nav-item ${activeTab === 'quiz' ? 'active' : ''}`}
-            onClick={() => { setActiveTab('quiz'); setShowLiveStreamView(false); }}
+            onClick={() => { setActiveTab('quiz'); }}
           >
             <HelpCircle size={18} />
             <span>Practice & Tests</span>
@@ -1408,7 +1299,7 @@ Click OK to confirm payment authorization.`);
 
           <div 
             className={`nav-item ${activeTab === 'doubt' ? 'active' : ''}`}
-            onClick={() => { setActiveTab('doubt'); setShowLiveStreamView(false); }}
+            onClick={() => { setActiveTab('doubt'); }}
           >
             <Sparkles size={18} />
             <span>AI Doubt Solver</span>
@@ -1416,7 +1307,7 @@ Click OK to confirm payment authorization.`);
 
           <div 
             className={`nav-item ${activeTab === 'library' ? 'active' : ''}`}
-            onClick={() => { setActiveTab('library'); setShowLiveStreamView(false); }}
+            onClick={() => { setActiveTab('library'); }}
           >
             <FileText size={18} />
             <span>Study Material</span>
@@ -1425,7 +1316,7 @@ Click OK to confirm payment authorization.`);
           {userRole === 'admin' && (
             <div 
               className={`nav-item ${activeTab === 'admin' ? 'active' : ''}`}
-              onClick={() => { setActiveTab('admin'); setShowLiveStreamView(false); }}
+              onClick={() => { setActiveTab('admin'); }}
             >
               <Settings size={18} />
               <span style={{ color: '#34d399', fontWeight: 'bold' }}>Faculty Portal</span>
@@ -1474,7 +1365,6 @@ Click OK to confirm payment authorization.`);
             <h1>
               {activeTab === 'dashboard' && 'Academic Dashboard'}
               {activeTab === 'lectures' && 'Syllabus & Video Lectures'}
-              {activeTab === 'live' && 'Faculty Live Classrooms'}
               {activeTab === 'quiz' && 'Interactive MCQ Practice Engine'}
               {activeTab === 'doubt' && 'Instant AI Pharmacological Solver'}
               {activeTab === 'library' && 'Reference Library & Revision Sheets'}
@@ -1546,10 +1436,10 @@ Click OK to confirm payment authorization.`);
               <div className="welcome-hero glass-card">
                 <div className="welcome-hero-content">
                   <h2>Welcome Back, {username}!</h2>
-                  <p>Your goal is set to <strong>{selectedGoal} Exam</strong>. Keep up the high score, 64% of today's target has been completed.</p>
+                  <p>Your goal is set to <strong>{selectedGoal || 'General'}</strong>. You currently have {xpPoints} XP. Keep learning to grow your streak!</p>
                   <div style={{ marginTop: '16px', display: 'flex', gap: '12px' }}>
                     <button className="btn btn-primary" onClick={() => setActiveTab('lectures')}>
-                      Resume: Absorption Kinetics <Play size={14} fill="currentColor" />
+                      {filteredLectures.length > 0 ? `Resume: ${filteredLectures[0].title}` : 'Browse Video Lectures'} <Play size={14} fill="currentColor" />
                     </button>
                     <button className="btn btn-secondary" onClick={() => setActiveTab('quiz')}>
                       Daily Practice Test <HelpCircle size={14} />
@@ -1565,7 +1455,7 @@ Click OK to confirm payment authorization.`);
                     <BookOpen size={24} />
                   </div>
                   <div>
-                    <div className="stat-number">{lectures.length} Total</div>
+                    <div className="stat-number">{filteredLectures.length} Total</div>
                     <div className="stat-label">Syllabus Lectures Available</div>
                   </div>
                 </div>
@@ -1575,8 +1465,8 @@ Click OK to confirm payment authorization.`);
                     <CheckCircle size={24} />
                   </div>
                   <div>
-                    <div className="stat-number">{quizQuestions.length} Questions</div>
-                    <div className="stat-label">GPAT Question Bank</div>
+                    <div className="stat-number">{activeQuestions.length} Questions</div>
+                    <div className="stat-label">Practice Question Bank</div>
                   </div>
                 </div>
 
@@ -1585,42 +1475,12 @@ Click OK to confirm payment authorization.`);
                     <FileText size={24} />
                   </div>
                   <div>
-                    <div className="stat-number">{studyMaterials.length} Documents</div>
+                    <div className="stat-number">{filteredStudyMaterials.length} Documents</div>
                     <div className="stat-label">Pharma Monograph Notes</div>
                   </div>
                 </div>
               </div>
 
-              {/* LIVE Class Alert Banner */}
-              {liveSessions.some(s => s.isLive) && (
-                <div className="live-class-alert glass-card">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                    <div className="live-indicator">
-                      <span className="live-dot"></span>
-                      <span>BROADCASTING</span>
-                    </div>
-                    <div>
-                      <h4 style={{ fontSize: '16px', marginBottom: '2px' }}>
-                        {liveSessions.find(s => s.isLive)?.title}
-                      </h4>
-                      <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-                        Instructor: {liveSessions.find(s => s.isLive)?.instructor} | {liveSessions.find(s => s.isLive)?.activeWatchers} students watching
-                      </p>
-                    </div>
-                  </div>
-                  <button 
-                    className="btn btn-danger" 
-                    onClick={() => {
-                      const activeSession = liveSessions.find(s => s.isLive) || liveSessions[0];
-                      setActiveLiveSession(activeSession);
-                      setActiveSlideIndex(0);
-                      setShowLiveStreamView(true);
-                    }}
-                  >
-                    Join Classroom <Video size={16} />
-                  </button>
-                </div>
-              )}
 
               {/* Split layout: Batches & Leaderboard */}
               <div className="dashboard-content-split">
@@ -1856,8 +1716,7 @@ Click OK to confirm payment authorization.`);
                   </div>
 
                   <div className="lecture-playlist-items">
-                    {lectures
-                      .filter(l => !l.goal || l.goal === selectedGoal)
+                    {filteredLectures
                       .filter(l => l.title.toLowerCase().includes(lectureSearch.toLowerCase()) || l.subject.toLowerCase().includes(lectureSearch.toLowerCase()))
                       .map((l) => (
                         <div 
@@ -1908,139 +1767,8 @@ Click OK to confirm payment authorization.`);
                             </div>
                           </div>
                         </div>
-                    ))}
+                      ))}
                   </div>
-                </div>
-
-              </div>
-            </div>
-          )}
-
-          {/* ==========================================
-            TAB: LIVE STREAM INSTRUCTOR CLASSES
-            ========================================== */}
-          {activeTab === 'live' && (
-            <div className="fade-in-up">
-              <div style={{ maxWidth: '800px', margin: '0 auto' }}>
-                <div className="welcome-hero glass-card" style={{ background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.15) 0%, rgba(139, 92, 246, 0.05) 100%)', borderColor: 'rgba(239, 68, 68, 0.25)' }}>
-                  <h2>Live Faculty Interactive Classroom</h2>
-                  <p>Connect immediately with top pharmacy professors, clear doubts, and solve boards in real time.</p>
-                </div>
-
-                <h3>Available Live & Scheduled Sessions</h3>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
-                  {liveSessions.map((session) => (
-                    <div key={session.id} className="glass-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                          {session.isLive ? (
-                            <span className="badge badge-success" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                              <span className="live-dot" style={{ width: '6px', height: '6px', backgroundColor: 'white' }}></span> LIVE NOW
-                            </span>
-                          ) : (
-                            <span className="badge badge-warning">SCHEDULED</span>
-                          )}
-                          <span className="badge badge-primary">{session.subject}</span>
-                        </div>
-                        <h4 style={{ fontSize: '18px', marginBottom: '4px' }}>{session.title}</h4>
-                        <p style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
-                          Faculty Instructor: <strong>{session.instructor}</strong>
-                        </p>
-                      </div>
-
-                      <div>
-                        {session.isLive ? (
-                          <button 
-                            className="btn btn-danger"
-                            onClick={() => {
-                              if (!isPremiumUser && !joinedStreamIds.includes(session.id)) {
-                                if (joinedStreamIds.length >= 1) {
-                                  addToast('Free Tier Limit: Standard plan allows attending only 1 live stream classroom.', 'info');
-                                  setShowSubscriptionModal(true);
-                                  return;
-                                }
-                                setJoinedStreamIds(prev => {
-                                  const next = [...prev, session.id];
-                                  localStorage.setItem('pharmiq_joined_stream_ids', JSON.stringify(next));
-                                  return next;
-                                });
-                              }
-                              setActiveLiveSession(session);
-                              setActiveSlideIndex(0);
-                              setShowLiveStreamView(true);
-
-                              // WebRTC P2P Receiver connection
-                              try {
-                                if (peerRef.current) peerRef.current.destroy();
-
-                                const studentPeerId = `student_${Date.now()}`;
-                                const peer = new (window as any).Peer(studentPeerId);
-                                peerRef.current = peer;
-
-                                peer.on('open', (id: string) => {
-                                  console.log('📡 Student WebRTC Viewer active with Peer ID:', id);
-                                  
-                                  const adminPeerId = `pharmiq_${session.id}`;
-                                  console.log('Initiating WebRTC stream request to Admin Peer:', adminPeerId);
-
-                                  // Create lightweight dummy audio stream to establish connection
-                                  let dummyStream: MediaStream;
-                                  try {
-                                    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-                                    const oscillator = ctx.createOscillator();
-                                    const dst = ctx.createMediaStreamDestination();
-                                    oscillator.connect(dst);
-                                    oscillator.start();
-                                    dummyStream = dst.stream;
-                                  } catch (e) {
-                                    dummyStream = new MediaStream();
-                                  }
-
-                                  // Proactively dial admin
-                                  const callAdminPeer = () => {
-                                    const call = peer.call(adminPeerId, dummyStream);
-                                    activeCallRef.current = call;
-
-                                    call.on('stream', (remoteStream: MediaStream) => {
-                                      console.log('🔥 WebRTC live video/audio stream received successfully!', remoteStream);
-                                      setLiveStreamObj(remoteStream);
-                                      
-
-                                    });
-
-                                    call.on('error', (err: any) => {
-                                      console.error('WebRTC Peer call failed, retrying in 2 seconds...', err);
-                                      setTimeout(callAdminPeer, 2000);
-                                    });
-                                  };
-
-                                  // Start call with 1 second delay to ensure admin signaling is registered
-                                  setTimeout(callAdminPeer, 1200);
-                                });
-
-                                peer.on('error', (err: any) => {
-                                  console.error('Student PeerJS Error:', err);
-                                });
-                              } catch (e) {
-                                console.error('WebRTC P2P initialization error:', e);
-                              }
-
-                              addToast('Connecting to Faculty WebRTC Live Stream Server...', 'info');
-                            }}
-                          >
-                            Enter Classroom
-                          </button>
-                        ) : (
-                          <div style={{ textAlign: 'right' }}>
-                            <span style={{ fontSize: '13px', color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>{session.time}</span>
-                            <button className="btn btn-secondary" onClick={() => addToast('SMS & Push notification reminder set!', 'success')}>
-                              Set Reminder
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
                 </div>
               </div>
             </div>
@@ -2163,7 +1891,7 @@ Click OK to confirm payment authorization.`);
                   
                   <h2>Practice Test Complete!</h2>
                   <p style={{ color: 'var(--text-secondary)', marginBottom: '32px' }}>
-                    Great job practicing! Consistent testing drives 85% higher retention for GPAT.
+                    Great job practicing! Consistent testing drives 85% higher retention for exams.
                   </p>
 
                   <div style={{ display: 'flex', justifyContent: 'center', gap: '40px', marginBottom: '32px' }}>
@@ -2354,9 +2082,7 @@ Click OK to confirm payment authorization.`);
               </div>
 
               <div className="grid-2" style={{ marginTop: '24px' }}>
-                {studyMaterials
-                  .filter(m => !m.goal || m.goal === selectedGoal)
-                  .map((m) => (
+                {filteredStudyMaterials.map((m) => (
                   <div key={m.id} className="material-card">
                     <div className="material-icon">
                       <FileText size={24} />
@@ -2374,7 +2100,7 @@ Click OK to confirm payment authorization.`);
                     <div style={{ display: 'flex', gap: '8px' }}>
                       <button 
                         className={`btn ${m.isPremium && !isPremiumUser ? 'btn-secondary' : 'btn-success'}`}
-                        onClick={() => handleDownloadMaterial(m.title, m.isPremium)}
+                        onClick={() => handleDownloadMaterial(m)}
                       >
                         {m.isPremium && !isPremiumUser ? <Lock size={14} /> : <Download size={14} />} Download
                       </button>
@@ -2406,8 +2132,52 @@ Click OK to confirm payment authorization.`);
                   Simulate core administrative and educator actions. Injected data will dynamically appear immediately inside the respective dashboard screens!
                 </p>
 
-                <div className="grid-2">
-                  
+                <div>
+
+                  {/* Form: Add Batch */}
+                  <div className="glass-card" style={{ background: 'rgba(0,0,0,0.1)', marginBottom: '24px' }}>
+                    <h3 style={{ fontSize: '16px', marginBottom: '16px' }}>Manage Academic Batches</h3>
+                    <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                      <input type="text" className="form-input" placeholder="New Batch (e.g. NIPER Achievers)" value={adminNewBatch} onChange={e => setAdminNewBatch(e.target.value)} />
+                      <button className="btn btn-primary" onClick={handleAdminAddBatch}>Add</button>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                      {adminBatches.map(b => (
+                        <span key={b.id} className="badge badge-primary" style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', padding: '4px 8px' }}>
+                          {b.name} <X size={12} style={{ cursor: 'pointer', opacity: 0.8 }} onClick={() => handleAdminDeleteBatch(b.id)} />
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Form: Add Subject */}
+                  <div className="glass-card" style={{ background: 'rgba(0,0,0,0.1)', marginBottom: '24px' }}>
+                    <h3 style={{ fontSize: '16px', marginBottom: '16px' }}>Manage Subjects</h3>
+                    <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                      <select 
+                        className="form-input" 
+                        style={{ maxWidth: '200px' }}
+                        value={adminNewSubjectBatchId} 
+                        onChange={e => setAdminNewSubjectBatchId(e.target.value)}
+                      >
+                        <option value="">Select Batch...</option>
+                        {adminBatches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                      </select>
+                      <input type="text" className="form-input" placeholder="New Subject (e.g. Biochemistry)" value={adminNewSubject} onChange={e => setAdminNewSubject(e.target.value)} />
+                      <button className="btn btn-primary" onClick={handleAdminAddSubject}>Add</button>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                      {adminSubjects.map(s => {
+                        const batchName = adminBatches.find(b => b.id === s.batchId)?.name || 'Unknown';
+                        return (
+                          <span key={s.id} className="badge badge-success" style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', padding: '4px 8px' }}>
+                            {s.name} <span style={{ opacity: 0.6, fontSize: '9px' }}>({batchName})</span> <X size={12} style={{ cursor: 'pointer', opacity: 0.8 }} onClick={() => handleAdminDeleteSubject(s.id)} />
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   {/* Form: Upload Lecture */}
                   <div className="glass-card" style={{ background: 'rgba(0,0,0,0.1)' }}>
                     <h3 style={{ fontSize: '16px', marginBottom: '16px' }}>Upload New Syllabus Lecture</h3>
@@ -2424,7 +2194,18 @@ Click OK to confirm payment authorization.`);
                         />
                       </div>
                       
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
+                        <div>
+                          <label className="form-label" style={{ fontSize: '11px' }}>Batch</label>
+                          <select 
+                            className="form-input"
+                            value={adminLectureBatch}
+                            onChange={(e) => setAdminLectureBatch(e.target.value)}
+                          >
+                            <option value="">Global (All)</option>
+                            {adminBatches.map(b => <option key={b.id} value={b.name}>{b.name}</option>)}
+                          </select>
+                        </div>
                         <div>
                           <label className="form-label" style={{ fontSize: '11px' }}>Subject</label>
                           <select 
@@ -2432,10 +2213,11 @@ Click OK to confirm payment authorization.`);
                             value={adminLectureSubject}
                             onChange={(e) => setAdminLectureSubject(e.target.value)}
                           >
-                            <option value="Pharmacology">Pharmacology</option>
-                            <option value="Pharmaceutics">Pharmaceutics</option>
-                            <option value="Medicinal Chemistry">Medicinal Chemistry</option>
-                            <option value="Pharmacognosy">Pharmacognosy</option>
+                            <option value="">Select Subject</option>
+                            {adminSubjects
+                              .filter(s => adminLectureBatch ? adminBatches.find(b => b.name === adminLectureBatch)?.id === s.batchId : true)
+                              .map(s => <option key={s.id} value={s.name}>{s.name}</option>)
+                            }
                           </select>
                         </div>
                         <div>
@@ -2457,6 +2239,7 @@ Click OK to confirm payment authorization.`);
                           style={{ padding: '6px', fontSize: '12px' }}
                           onChange={(e) => {
                             if (e.target.files && e.target.files[0]) {
+                              setAdminLectureFile(e.target.files[0]);
                               setAdminLectureFileName(e.target.files[0].name);
                               addToast(`Selected notes file: ${e.target.files[0].name}`, 'success');
                             }
@@ -2474,64 +2257,8 @@ Click OK to confirm payment authorization.`);
                         <label htmlFor="premiumLec" style={{ fontSize: '13px' }}>Mark as Premium Gold Lecture</label>
                       </div>
 
-                      <button type="submit" className="btn btn-success" style={{ marginTop: '8px' }}>
-                        <Plus size={14} /> Inject Lecture
-                      </button>
-                    </form>
-                  </div>
-
-                  {/* Form: Start Live Stream */}
-                  <div className="glass-card" style={{ background: 'rgba(0,0,0,0.1)' }}>
-                    <h3 style={{ fontSize: '16px', marginBottom: '16px' }}>Broadcast New Classroom LIVE</h3>
-                    <form onSubmit={handleAdminSetLive} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                      <div>
-                        <label className="form-label" style={{ fontSize: '11px' }}>Class Topic Title</label>
-                        <input 
-                          type="text" 
-                          className="form-input" 
-                          placeholder="e.g. Dose Calculations Numericals"
-                          value={adminLiveTitle}
-                          onChange={(e) => setAdminLiveTitle(e.target.value)}
-                          required
-                        />
-                      </div>
-
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                        <div>
-                          <label className="form-label" style={{ fontSize: '11px' }}>Subject</label>
-                          <select 
-                            className="form-input"
-                            value={adminLiveSubject}
-                            onChange={(e) => setAdminLiveSubject(e.target.value)}
-                          >
-                            <option value="Pharmacology">Pharmacology</option>
-                            <option value="Pharmaceutics">Pharmaceutics</option>
-                            <option value="Pharmaceutical Analysis">Analysis</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className="form-label" style={{ fontSize: '11px' }}>Faculty</label>
-                          <input 
-                            type="text" 
-                            className="form-input" 
-                            value={adminLiveTeacher}
-                            onChange={(e) => setAdminLiveTeacher(e.target.value)}
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="form-label" style={{ fontSize: '11px' }}>Live Slides (Bullet format)</label>
-                        <textarea 
-                          className="form-input" 
-                          style={{ height: '80px', fontSize: '12px', fontFamily: 'monospace' }}
-                          value={adminLiveSlides}
-                          onChange={(e) => setAdminLiveSlides(e.target.value)}
-                        ></textarea>
-                      </div>
-
-                      <button type="submit" className="btn btn-danger">
-                        <Video size={14} /> Go Live Instantly
+                      <button type="submit" className="btn btn-success" style={{ marginTop: '8px' }} disabled={isUploading}>
+                        <Plus size={14} /> {isUploading ? 'Uploading to Cloud...' : 'Inject Lecture'}
                       </button>
                     </form>
                   </div>
@@ -2540,7 +2267,7 @@ Click OK to confirm payment authorization.`);
 
                 {/* Form: Inject Test Question */}
                 <div className="glass-card" style={{ marginTop: '24px', background: 'rgba(0,0,0,0.1)' }}>
-                  <h3 style={{ fontSize: '16px', marginBottom: '16px' }}>Inject GPAT Practice MCQ Question</h3>
+                  <h3 style={{ fontSize: '16px', marginBottom: '16px' }}>Inject Practice MCQ Question</h3>
                   <form onSubmit={handleAdminAddQuestion} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                     
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -2558,16 +2285,28 @@ Click OK to confirm payment authorization.`);
 
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                         <div>
+                          <label className="form-label" style={{ fontSize: '11px' }}>Batch</label>
+                          <select 
+                            className="form-input"
+                            value={adminQuestionBatch}
+                            onChange={(e) => setAdminQuestionBatch(e.target.value)}
+                          >
+                            <option value="">Global (All)</option>
+                            {adminBatches.map(b => <option key={b.id} value={b.name}>{b.name}</option>)}
+                          </select>
+                        </div>
+                        <div>
                           <label className="form-label" style={{ fontSize: '11px' }}>Subject Tag</label>
                           <select 
                             className="form-input"
                             value={adminQuestionSubject}
                             onChange={(e) => setAdminQuestionSubject(e.target.value)}
                           >
-                            <option value="Pharmacology">Pharmacology</option>
-                            <option value="Pharmaceutics">Pharmaceutics</option>
-                            <option value="Pharmacognosy">Pharmacognosy</option>
-                            <option value="Jurisprudence">Jurisprudence</option>
+                            <option value="">Select Subject</option>
+                            {adminSubjects
+                              .filter(s => adminQuestionBatch ? adminBatches.find(b => b.name === adminQuestionBatch)?.id === s.batchId : true)
+                              .map(s => <option key={s.id} value={s.name}>{s.name}</option>)
+                            }
                           </select>
                         </div>
                         <div>
@@ -2621,6 +2360,30 @@ Click OK to confirm payment authorization.`);
                   </form>
                 </div>
 
+                {/* Section: Manage Uploaded Lectures */}
+                <div className="glass-card" style={{ marginTop: '24px', background: 'rgba(0,0,0,0.1)' }}>
+                  <h3 style={{ fontSize: '18px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                    📺 Manage Uploaded Lectures
+                  </h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {lectures.length === 0 ? (
+                      <div style={{ padding: '16px', color: 'var(--text-secondary)' }}>No lectures uploaded yet.</div>
+                    ) : (
+                      lectures.map(lec => (
+                        <div key={lec.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                          <div>
+                            <strong style={{ display: 'block', fontSize: '14px', color: 'white' }}>{lec.title}</strong>
+                            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{lec.subject} • {lec.duration}</span>
+                          </div>
+                          <button className="btn btn-secondary" style={{ padding: '6px 12px', background: 'rgba(239, 68, 68, 0.2)', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#f87171' }} onClick={() => handleAdminDeleteLecture(lec.id)}>
+                            Delete
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
                 {/* Section: Student Directory and Enrollment Management */}
                 <div className="glass-card" style={{ marginTop: '24px', background: 'rgba(0,0,0,0.1)' }}>
                   <h3 style={{ fontSize: '18px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
@@ -2665,10 +2428,26 @@ Click OK to confirm payment authorization.`);
                                 value={student.goal}
                                 onChange={(e) => handleAdminUpdateUser(student.id, { goal: e.target.value })}
                               >
-                                <option value="GPAT">GPAT Exam</option>
-                                <option value="NIPER">NIPER Board</option>
-                                <option value="Drug Inspector">Drug Inspector</option>
-                                <option value="Pharmacist Board">Government Pharmacist</option>
+                                <option value="">Select Goal...</option>
+                                {adminBatches.map(b => (
+                                  <option key={b.id} value={b.name}>{b.name}</option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Batch Selector */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                              <label style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Academic Batch</label>
+                              <select 
+                                className="form-input" 
+                                style={{ padding: '6px 12px', fontSize: '12.5px', minWidth: '150px' }}
+                                value={(student as any).batch || ''}
+                                onChange={(e) => handleAdminUpdateUser(student.id, { batch: e.target.value })}
+                              >
+                                <option value="">No Batch Assigned</option>
+                                {adminBatches.map(b => (
+                                  <option key={b.id} value={b.name}>{b.name}</option>
+                                ))}
                               </select>
                             </div>
 
@@ -2687,6 +2466,18 @@ Click OK to confirm payment authorization.`);
                                 )}
                               </button>
                             </div>
+
+                            {/* Delete User */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginLeft: 'auto' }}>
+                              <label style={{ fontSize: '11px', color: 'transparent' }}>Action</label>
+                              <button 
+                                className="btn btn-secondary"
+                                style={{ padding: '6px 16px', fontSize: '12.5px', background: 'rgba(239, 68, 68, 0.2)', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#f87171' }}
+                                onClick={() => handleAdminDeleteUser(student.id)}
+                              >
+                                Delete User
+                              </button>
+                            </div>
                           </div>
                         </div>
                       ))
@@ -2701,323 +2492,7 @@ Click OK to confirm payment authorization.`);
         </div>
       </main>
 
-      {/* ==========================================
-        REAL-TIME CHAT & LIVE STREAM OVERLAY
-        ========================================== */}
-      {showLiveStreamView && activeLiveSession && (
-        <div className="live-stream-overlay">
-          
-          {/* Left Area: Facecam & Active Board Presentation */}
-          <div className="live-stream-left">
-            <div className="live-badge-red">
-              <span className="live-dot" style={{ backgroundColor: 'white' }}></span>
-              <span>LIVE</span>
-            </div>
 
-            <div className="live-stream-header">
-              <div className="live-views-badge">
-                <User size={14} />
-                <span>1.4k Watching</span>
-              </div>
-              <button 
-                className="btn btn-secondary" 
-                style={{ padding: '8px', borderRadius: '50%', background: 'rgba(0,0,0,0.6)' }}
-                onClick={handleLeaveClassroom}
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            <div className="live-stream-video-container">
-              <div className="live-stream-video">
-                
-                {/* Simulated Presentation Slides */}
-                {activeLiveSession.slides.length > 0 ? (
-                  <div className="live-slides-view">
-                    <h2>{activeLiveSession.slides[activeSlideIndex]?.title}</h2>
-                    <div className="live-slides-content">
-                      {activeLiveSession.slides[activeSlideIndex]?.content.map((line, idx) => (
-                        <p key={idx} style={{ fontSize: '15px', color: 'white', marginBottom: '8px', textAlign: 'left' }}>
-                          {line}
-                        </p>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                  <div style={{ textAlign: 'center' }}>
-                    <Sparkles size={48} className="animate-pulse-slow" style={{ color: 'var(--primary)', margin: '0 auto 16px' }} />
-                    <h3>Classroom Setup Complete</h3>
-                    <p style={{ color: 'var(--text-secondary)' }}>Instructor is initiating webcam and slide streams...</p>
-                  </div>
-                )}
-
-                {/* Simulated Floating Emojis */}
-                <div className="floating-hearts-container">
-                  {floatingHearts.map((heart) => (
-                    <div key={heart.id} className="floating-heart" style={heart.style}>
-                      {heart.emoji}
-                    </div>
-                  ))}
-                </div>
-
-                {/* Facecam Picture-in-Picture */}
-                <div className="live-instructor-facecam" style={{ width: '220px', height: '165px', overflow: 'hidden', position: 'absolute', bottom: '24px', right: '24px', borderRadius: '12px', boxShadow: '0 8px 32px rgba(0,0,0,0.5)', border: '2px solid rgba(255,255,255,0.1)' }}>
-                  {userRole === 'admin' ? (
-                    liveStreamObj && !isCameraMuted ? (
-                      <video 
-                        ref={liveVideoRef}
-                        autoPlay 
-                        playsInline 
-                        muted={true}
-                        style={{
-                          width: '100%',
-                          height: '100%',
-                          objectFit: 'cover',
-                          transform: 'scaleX(-1)',
-                          background: '#040710'
-                        }}
-                      />
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%', background: '#111827', color: 'var(--text-secondary)' }}>
-                        <Video size={24} style={{ marginBottom: '4px', opacity: 0.5 }} />
-                        <span style={{ fontSize: '10px' }}>Camera Paused</span>
-                      </div>
-                    )
-                  ) : (
-                    /* Student Viewer Side: Premium Live Video stream fallback / real receiver */
-                    remoteFrame ? (
-                      <img 
-                        src={remoteFrame}
-                        alt="Instructor Facecam"
-                        style={{
-                          width: '100%',
-                          height: '100%',
-                          objectFit: 'cover',
-                          transform: 'scaleX(-1)', // Mirror image to look like a webcam
-                          background: '#040710'
-                        }}
-                      />
-                    ) : (
-                      /* Premium glassmorphic fallback visualizer card */
-                      <div style={{ 
-                        display: 'flex', 
-                        flexDirection: 'column', 
-                        alignItems: 'center', 
-                        justifyContent: 'center', 
-                        height: '100%', 
-                        width: '100%', 
-                        background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%)', 
-                        color: 'white',
-                        position: 'relative'
-                      }}>
-                        {/* Pulsing visualizer circle */}
-                        <div className="animate-ping" style={{ 
-                          position: 'absolute', 
-                          width: '80px', 
-                          height: '80px', 
-                          borderRadius: '50%', 
-                          background: 'rgba(52, 211, 153, 0.15)',
-                          animationDuration: '2s'
-                        }}></div>
-                        
-                        {/* High-res Professional Faculty Avatar */}
-                        <div style={{ 
-                          width: '64px', 
-                          height: '64px', 
-                          borderRadius: '50%', 
-                          border: '2px solid var(--success)', 
-                          boxShadow: '0 0 15px rgba(52, 211, 153, 0.4)',
-                          background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: '24px',
-                          fontWeight: 'bold',
-                          zIndex: 2,
-                          marginBottom: '8px'
-                        }}>
-                          👨‍🏫
-                        </div>
-                        
-                        <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--success)', zIndex: 2 }}>Broadcasting Live</span>
-                        <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.6)', zIndex: 2 }}>Secure WebRTC P2P Feed</span>
-                      </div>
-                    )
-                  )}
-                  
-                  <div className="live-instructor-badge" style={{ position: 'absolute', bottom: '6px', left: '6px', margin: 0, zIndex: 10 }}>
-                    🎥 {activeLiveSession.instructor}
-                  </div>
-                </div>
-
-              </div>
-            </div>
-
-            {/* Bottom classroom controls */}
-            <div className="live-stream-bottom-bar">
-              <div className="live-controls-left">
-                <span style={{ fontSize: '14px', fontWeight: 'bold' }}>{activeLiveSession.title}</span>
-                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Subject: {activeLiveSession.subject}</span>
-              </div>
-
-              <div className="live-controls-center" style={{ gap: '12px' }}>
-                {/* Dynamic voice analyser Canvas */}
-                {liveStreamObj && !isMicMuted && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span style={{ fontSize: '10px', color: 'var(--success)' }}>Mic Feed:</span>
-                    <canvas id="liveAudioCanvas" width="50" height="18" style={{ borderRadius: '3px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-color)' }}></canvas>
-                  </div>
-                )}
-
-                {/* Webcam Controls */}
-                {userRole === 'admin' && (
-                  <div style={{ display: 'flex', gap: '4px' }}>
-                    <button 
-                      className={`btn ${isCameraMuted ? 'btn-danger' : 'btn-secondary'}`}
-                      style={{ padding: '6px 10px', fontSize: '12px' }}
-                      onClick={handleToggleCamera}
-                      title="Toggle Camera On/Off"
-                    >
-                      {isCameraMuted ? '🎥 Unmute Cam' : '🎥 Mute Cam'}
-                    </button>
-                    <button 
-                      className={`btn ${isMicMuted ? 'btn-danger' : 'btn-secondary'}`}
-                      style={{ padding: '6px 10px', fontSize: '12px' }}
-                      onClick={handleToggleMic}
-                      title="Toggle Mic On/Off"
-                    >
-                      {isMicMuted ? '🎤 Unmute Mic' : '🎤 Mute Mic'}
-                    </button>
-                  </div>
-                )}
-
-                {/* Device Selector Dropdowns */}
-                {userRole === 'admin' && liveStreamDevices.filter(d => d.kind === 'videoinput').length > 0 && (
-                  <select 
-                    className="speed-select"
-                    style={{ maxWidth: '130px', fontSize: '11px', height: '30px' }}
-                    value={activeVideoDevice}
-                    onChange={(e) => {
-                      setActiveVideoDevice(e.target.value);
-                      startLiveWebcamStream(e.target.value);
-                    }}
-                  >
-                    {liveStreamDevices.filter(d => d.kind === 'videoinput').map(dev => (
-                      <option key={dev.deviceId} value={dev.deviceId}>{dev.label || `Camera ${dev.deviceId.slice(0, 4)}`}</option>
-                    ))}
-                  </select>
-                )}
-
-                <button 
-                  className={`btn ${isHandRaised ? 'btn-success' : 'btn-secondary'}`}
-                  onClick={() => {
-                    setIsHandRaised(!isHandRaised);
-                    addToast(isHandRaised ? 'Lowered hand.' : 'You raised your hand! Faculty notified.', 'success');
-                  }}
-                >
-                  🖐️ {isHandRaised ? 'Hand Raised' : 'Raise Hand'}
-                </button>
-
-                <button className="btn btn-secondary" onClick={triggerFloatingHeart}>
-                  💖 React
-                </button>
-
-                {activeLiveSession.slides.length > 0 && (
-                  <div style={{ display: 'flex', gap: '4px' }}>
-                    <button 
-                      className="btn btn-secondary"
-                      disabled={activeSlideIndex === 0}
-                      onClick={() => setActiveSlideIndex(prev => prev - 1)}
-                    >
-                      Prev
-                    </button>
-                    <button 
-                      className="btn btn-secondary"
-                      disabled={activeSlideIndex === activeLiveSession.slides.length - 1}
-                      onClick={() => setActiveSlideIndex(prev => prev + 1)}
-                    >
-                      Next
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              <button 
-                className="btn btn-danger" 
-                onClick={handleLeaveClassroom}
-              >
-                Leave Classroom
-              </button>
-            </div>
-          </div>
-
-          {/* Right Area: Interactive Q&A chat thread */}
-          <div className="live-stream-right">
-            <div className="live-chat-header">
-              <h3>Live Interactive Chat</h3>
-              <span className="badge badge-success">Online</span>
-            </div>
-
-            <div className="live-chat-messages">
-              {streamComments.map((msg) => (
-                <div key={msg.id} className="live-chat-msg">
-                  <div className="chat-msg-user">
-                    <span style={{ 
-                      color: msg.role === 'Faculty' ? '#ec4899' : msg.role === 'System' ? '#34d399' : '#3b82f6' 
-                    }}>
-                      {msg.user}
-                    </span>
-                    {msg.role && (
-                      <span className="badge badge-primary" style={{ fontSize: '8px', padding: '1px 4px' }}>
-                        {msg.role}
-                      </span>
-                    )}
-                  </div>
-                  <div className="chat-msg-text">{msg.text}</div>
-                </div>
-              ))}
-            </div>
-
-            {/* Send chat */}
-            <form 
-              className="live-chat-input-area"
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (!newStreamComment.trim() || !activeLiveSession) return;
-                
-                const body = {
-                  sender: userRole === 'admin' ? 'Dr. Ramesh Kumar' : username || 'Student',
-                  text: newStreamComment,
-                  role: userRole === 'admin' ? 'admin' : 'student'
-                };
-
-                fetch(getApiUrl(`/api/live-sessions/${activeLiveSession.id}/chat`), {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(body)
-                }).catch(err => console.error('Error sending message:', err));
-
-                setNewStreamComment('');
-                triggerFloatingHeart();
-              }}
-            >
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <input 
-                  type="text" 
-                  className="form-input" 
-                  placeholder="Ask public question in class..."
-                  value={newStreamComment}
-                  onChange={(e) => setNewStreamComment(e.target.value)}
-                />
-                <button type="submit" className="btn btn-primary" style={{ padding: '10px' }}>
-                  <Send size={14} />
-                </button>
-              </div>
-            </form>
-          </div>
-
-        </div>
-      )}
 
       {/* ==========================================
         SECURE SUBSCRIPTION MODAL (RAZORPAY GATEWAY)
@@ -3124,7 +2599,7 @@ Click OK to confirm payment authorization.`);
             <Flame size={64} style={{ color: 'var(--warning)', margin: '0 auto 16px' }} />
             <h2>You have a {streakDays} Day Study Streak! 🔥</h2>
             <p style={{ color: 'var(--text-secondary)', margin: '12px 0 24px', fontSize: '14px', lineHeight: '1.6' }}>
-              "Consistency is the key to mastering pharmacy. Students who maintain a 5+ day streak have an 88% higher GPAT passing rate."
+              "Consistency is the key to mastering pharmacy. Students who maintain a 5+ day streak have an 88% higher exam passing rate."
             </p>
             <button className="btn btn-primary" onClick={() => setShowMotivationOverlay(false)}>
               Keep Crushing It!
