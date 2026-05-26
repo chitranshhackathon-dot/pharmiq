@@ -964,6 +964,16 @@ app.delete('/api/admin/users/:id', async (req, res) => {
   }
 });
 
+// Serve Static Frontend (Vite Build) in Production
+const distPath = path.join(__dirname, '../dist');
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+  // Catch-all route to serve index.html for client-side routing
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+}
+
 // Start Server
 app.listen(PORT, () => {
   console.log(`🚀 Jupitor Education Dual-Database Auth Backend is active on http://localhost:${PORT}`);
