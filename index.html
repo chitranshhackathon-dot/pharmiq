@@ -6,10 +6,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     
     <!-- Primary SEO Meta Tags -->
-    <title>Pharmiq — Premium EdTech Platform for Pharmacy & GPAT Preparation</title>
-    <meta name="description" content="Pharmiq is India's premier pharma-learning platform offering high-quality video lectures, practice mock tests, and instant AI doubt resolution for GPAT, NIPER, D.Pharm, and B.Pharm students." />
+    <title>Jupitor Education — Premium EdTech Platform for Pharmacy & GPAT Preparation</title>
+    <meta name="description" content="Jupitor Education is India's premier pharma-learning platform offering high-quality video lectures, practice mock tests, and instant AI doubt resolution for GPAT, NIPER, D.Pharm, and B.Pharm students." />
     <meta name="keywords" content="GPAT preparation, NIPER coaching, D.Pharm, B.Pharm, Pharmacist exam, Pharma EdTech, pharmacy learning, AI doubt solver pharmacy" />
-    <meta name="author" content="Pharmiq Team" />
+    <meta name="author" content="Jupitor Education Team" />
 
     <!-- Google Fonts: Outfit (For Headings) and Inter (For UI Text) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -17,6 +17,20 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <!-- Google Identity Services -->
     <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script>
+      window.addEventListener('error', function(e) {
+        var errBox = document.createElement('div');
+        errBox.style = 'position:fixed;top:0;left:0;width:100%;background:red;color:white;z-index:999999;padding:20px;font-family:monospace;';
+        errBox.innerHTML = 'CRASH: ' + e.message + '<br>Line: ' + e.lineno + '<br>File: ' + e.filename;
+        document.body.appendChild(errBox);
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        var errBox = document.createElement('div');
+        errBox.style = 'position:fixed;top:0;left:0;width:100%;background:red;color:white;z-index:999999;padding:20px;font-family:monospace;';
+        errBox.innerHTML = 'PROMISE CRASH: ' + (e.reason ? e.reason.message : 'Unknown Promise Rejection');
+        document.body.appendChild(errBox);
+      });
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -1,4 +1,4 @@
-package co.pharmiq.app;
+package com.jupitoreducation.app;
 
 import com.getcapacitor.BridgeActivity;
 

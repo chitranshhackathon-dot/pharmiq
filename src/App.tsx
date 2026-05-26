@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { GoogleAuth } from '@codetrix-studio/capacitor-google-auth';
 import { 
   BookOpen, 
   Play, 
@@ -7,7 +8,7 @@ import {
   TrendingUp, 
   Flame, 
   Award, 
-  LogOut, 
+  LogOut, Trash2, Menu,
   User, 
   Clock, 
   CheckCircle, 
@@ -25,11 +26,9 @@ import {
   AlertCircle,
   X
 } from 'lucide-react';
-import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseKey = import.meta.env.VITE_SUPABASE_KEY || '';
-const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
+
+// Supabase client removed
 
 // ==========================================
 // MOCK DATA FOR PHARMIQ PLATFORM
@@ -126,35 +125,21 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState<boolean>(false);
 
   const [activeTab, setActiveTab] = useState<string>('dashboard');
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [toasts, setToasts] = useState<{ id: number; message: string; type: 'success' | 'info' }[]>([]);
 
-  // Initialize Google Identity Services
+  // Initialize Native Capacitor Google Auth
   useEffect(() => {
-    if (!token) {
-      const initGoogle = () => {
-        if ((window as any).google?.accounts?.id) {
-          (window as any).google.accounts.id.initialize({
-            client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID || '107382218764-dummy.apps.googleusercontent.com',
-            callback: handleGoogleAuthCallback,
-          });
-          
-          const buttonElement = document.getElementById('google-signin-button');
-          if (buttonElement) {
-            (window as any).google.accounts.id.renderButton(buttonElement, {
-              theme: 'dark',
-              size: 'large',
-              width: 320,
-              type: 'standard',
-              shape: 'pill'
-            });
-          }
-        } else {
-          setTimeout(initGoogle, 500);
-        }
-      };
-      initGoogle();
+    try {
+      GoogleAuth.initialize({
+        clientId: import.meta.env.VITE_GOOGLE_CLIENT_ID || '107382218764-dummy.apps.googleusercontent.com',
+        scopes: ['profile', 'email'],
+        grantOfflineAccess: true,
+      });
+    } catch (e) {
+      console.warn('GoogleAuth init warning:', e);
     }
-  }, [token, authMode]);
+  }, []);
 
   // Dynamically configure the backend API Base URL based on the running context (Web vs Android Mobile)
   const getApiUrl = (path: string): string => {
@@ -170,59 +155,44 @@ export default function App() {
     return `http://localhost:3001${path}`;
   };
 
-  const handleGoogleAuthCallback = async (response: any) => {
+  const handleGoogleSignIn = async () => {
     setAuthLoading(true);
     setAuthError(null);
     try {
+      const googleUser = await GoogleAuth.signIn();
+      const idToken = googleUser.authentication.idToken;
+      const displayName = (googleUser as any).name || (googleUser as any).displayName || 'Google Student';
+      
+      if (!idToken) throw new Error('Google Sign-in did not return an ID token.');
+      
       const res = await fetch(getApiUrl('/api/auth/google'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ credential: response.credential, goal: selectedGoal || '' }),
+        body: JSON.stringify({ credential: idToken, goal: selectedGoal || '' }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Google login failed');
-      }
       
-      if (!data || !data.token || !data.user) {
-        throw new Error('Invalid authentication response from server.');
-      }
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Google login failed on backend');
       
       const userToken = data.token;
-      const userObj = data.user;
-      const userUsername = userObj.username || 'Google Student';
-      const userGoal = userObj.goal || selectedGoal || '';
-      const userBatchValue = userObj.batch || '';
-      const userPremium = userObj.isPremiumUser ?? false;
-      const userRoleStr = userObj.role || 'student';
-      const userStreak = userObj.streakDays ?? 1;
-      const userXp = userObj.xpPoints ?? 100;
+      const userObj = data.user || {};
       
-      localStorage.setItem('pharmiq_token', userToken);
-      localStorage.setItem('pharmiq_username', userUsername);
-      localStorage.setItem('pharmiq_goal', userGoal);
-      localStorage.setItem('pharmiq_batch', userBatchValue);
-      localStorage.setItem('pharmiq_premium', userPremium ? 'true' : 'false');
-      localStorage.setItem('pharmiq_role', userRoleStr);
+      localStorage.setItem('jupitor_token', userToken);
+      localStorage.setItem('jupitor_username', userObj.username || displayName);
+      localStorage.setItem('jupitor_role', userObj.role || 'student');
       
       setToken(userToken);
-      setUsername(userUsername);
-      setSelectedGoal(userGoal);
-      setUserBatch(userBatchValue);
-      setIsPremiumUser(userPremium);
-      setUserRole(userRoleStr);
-      setStreakDays(userStreak);
-      setXpPoints(userXp);
-
-      if (data.isNewUser === false) {
-        localStorage.setItem('pharmiq_onboarded', 'true');
-        setOnboarded(true);
-      }
-
-      addToast(`Welcome back, ${userUsername}!`, 'success');
+      setUsername(userObj.username || displayName);
+      setSelectedGoal(userObj.goal || selectedGoal || '');
+      setUserRole(userObj.role || 'student');
+      setIsPremiumUser(userObj.isPremium || false);
+      setOnboarded(true);
+      addToast('Signed in with Google successfully!', 'success');
     } catch (err: any) {
-      console.error('Google Authentication Error:', err);
-      setAuthError(err.message || 'Google Auth Connection Error. Please verify server.');
+      console.error('Native Google Sign-In Error:', err);
+      if (err.message && !err.message.includes('canceled')) {
+        setAuthError(err.message || 'Google Sign-In failed.');
+      }
     } finally {
       setAuthLoading(false);
     }
@@ -374,8 +344,8 @@ export default function App() {
   const [adminLectureSubject, setAdminLectureSubject] = useState<string>('Pharmacology');
   const [adminLectureDuration, setAdminLectureDuration] = useState<string>('45 min');
   const [adminLecturePremium, setAdminLecturePremium] = useState<boolean>(false);
-  const [adminLectureFileName, setAdminLectureFileName] = useState<string>('');
-  const [adminLectureFile, setAdminLectureFile] = useState<File | null>(null);
+  const [adminLectureType, setAdminLectureType] = useState<'youtube' | 'pdf'>('youtube');
+  const [adminLectureUrl, setAdminLectureUrl] = useState<string>('');
   const [isUploading, setIsUploading] = useState<boolean>(false);
 
   const [adminBatches, setAdminBatches] = useState<{ id: string; name: string }[]>([]);
@@ -596,9 +566,9 @@ export default function App() {
     
     setTimeout(() => {
       const finalPrice = Math.round(amount * (1 - appliedDiscount));
-      const payConfirm = window.confirm(`[Pharmiq Secured Payment Gateway]
+      const payConfirm = window.confirm(`[Jupitor Education Secured Payment Gateway]
       
-Merchant: Pharmiq EdTech India
+Merchant: Jupitor Education EdTech India
 Plan: ${planName}
 Amount to Pay: ₹${finalPrice} (Discount Applied: ${appliedDiscount * 100}%)
 Payment Method: UPI / Razorpay Gateway Simulation
@@ -608,7 +578,7 @@ Click OK to confirm payment authorization.`);
       if (payConfirm) {
         setIsPremiumUser(true);
         setShowSubscriptionModal(false);
-        addToast('Payment Successful! Welcome to Pharmiq Gold Premium!', 'success');
+        addToast('Payment Successful! Welcome to Jupitor Education Gold Premium!', 'success');
         setXpPoints(x => x + 200);
       } else {
         addToast('Payment cancelled by student.', 'info');
@@ -682,96 +652,62 @@ Click OK to confirm payment authorization.`);
 
   const handleAdminAddLecture = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!adminLectureTitle) return;
-
-    setIsUploading(true);
-    let uploadedFileUrl = '';
-    let finalFileName = adminLectureFileName;
-
-    if (adminLectureFile && supabase) {
-      addToast('Uploading file securely to Supabase Storage...', 'info');
-      try {
-        const fileExt = adminLectureFile.name.split('.').pop();
-        const safeName = adminLectureFile.name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-        const filePath = `${Date.now()}_${safeName}.${fileExt}`;
-        
-        const { error: uploadError } = await supabase.storage
-          .from('pharmiq-content')
-          .upload(filePath, adminLectureFile);
-
-        if (uploadError) {
-          throw uploadError;
-        }
-
-        const { data } = supabase.storage
-          .from('pharmiq-content')
-          .getPublicUrl(filePath);
-
-        uploadedFileUrl = data.publicUrl;
-        finalFileName = adminLectureFile.name;
-        addToast('File uploaded successfully to the cloud!', 'success');
-      } catch (err: any) {
-        console.error('Upload failed:', err);
-        addToast(`Upload failed: ${err.message}`, 'info');
-        setIsUploading(false);
-        return; // Stop if upload fails
-      }
+    if (!adminLectureTitle || !adminLectureUrl) {
+      addToast('Please provide a title and URL', 'info');
+      return;
     }
 
-    const newLec: VideoLecture = {
-      id: `l_${Date.now()}`,
-      title: adminLectureTitle,
-      subject: adminLectureSubject,
-      duration: adminLectureDuration,
-      instructor: 'Guest Faculty Speaker',
-      videoUrl: 'Custom dynamic lecture uploaded via Faculty Panel',
-      views: '0',
-      isPremium: adminLecturePremium,
-      attachmentName: finalFileName || undefined,
-      attachmentSize: finalFileName ? (adminLectureFile ? `${(adminLectureFile.size / (1024 * 1024)).toFixed(2)} MB` : '2.4 MB') : undefined,
-      attachmentType: finalFileName ? 'Document / Video' : undefined,
-      goal: selectedGoal,
-      batch: adminLectureBatch,
-      fileUrl: uploadedFileUrl || undefined
-    };
+    setIsUploading(true);
+    addToast('Linking external content...', 'info');
 
-    setLectures(prev => [newLec, ...prev]);
-
-    // POST to backend sync
-    await fetch(getApiUrl('/api/lectures'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newLec)
-    }).catch(err => console.error('Error syncing lecture:', err));
-
-    // If PDF attachment is uploaded, also link it to Reference Library / Document Section
-    if (finalFileName) {
+    if (adminLectureType === 'youtube') {
+      const newLec: VideoLecture = {
+        id: `l_${Date.now()}`,
+        title: adminLectureTitle,
+        subject: adminLectureSubject,
+        duration: adminLectureDuration || 'YouTube VOD',
+        instructor: 'Guest Faculty Speaker',
+        videoUrl: adminLectureUrl,
+        views: '0',
+        isPremium: adminLecturePremium,
+        goal: selectedGoal,
+        batch: adminLectureBatch
+      };
+      setLectures(prev => [newLec, ...prev]);
+      
+      await fetch(getApiUrl('/api/lectures'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newLec)
+      }).catch(err => console.error('Error syncing lecture:', err));
+      
+      addToast('New YouTube Lecture linked successfully!', 'success');
+    } else {
       const newMaterial: StudyMaterial = {
         id: `mat_${Date.now()}`,
-        title: `${adminLectureTitle} Notes (${finalFileName})`,
-        type: 'Syllabus Attachment',
-        size: adminLectureFile ? `${(adminLectureFile.size / (1024 * 1024)).toFixed(2)} MB` : '2.4 MB',
+        title: adminLectureTitle,
+        type: 'PDF Notes',
+        size: 'External Link',
         subject: adminLectureSubject,
         isPremium: adminLecturePremium,
         goal: selectedGoal,
         batch: adminLectureBatch,
-        fileUrl: uploadedFileUrl || undefined
+        fileUrl: adminLectureUrl
       };
-
       setStudyMaterials(prev => [newMaterial, ...prev]);
-
+      
       await fetch(getApiUrl('/api/materials'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newMaterial)
       }).catch(err => console.error('Error syncing material:', err));
+      
+      addToast('New PDF Notes linked successfully!', 'success');
     }
 
     setAdminLectureTitle('');
-    setAdminLectureFileName('');
-    setAdminLectureFile(null);
+    setAdminLectureUrl('');
     setIsUploading(false);
-    addToast('New Lecture with dynamic class syllabus notes injected!', 'success');
   };
 
   const handleAdminAddQuestion = (e: React.FormEvent) => {
@@ -976,7 +912,7 @@ Click OK to confirm payment authorization.`);
     addToast(`Preparing "${material.title}" download files...`, 'info');
     setTimeout(() => {
       try {
-        const content = `PHARMIQ STUDY MATERIAL\n\nDocument Title: ${material.title}\nDownloaded on: ${new Date().toLocaleString()}\n\n---\nThis is a dynamic placeholder file generated by the Pharmiq platform.\nIn a full production environment, this securely streams the actual binary PDF payload directly from your Supabase Storage buckets.`;
+        const content = `PHARMIQ STUDY MATERIAL\n\nDocument Title: ${material.title}\nDownloaded on: ${new Date().toLocaleString()}\n\n---\nThis is a dynamic placeholder file generated by the Jupitor Education platform.\nIn a full production environment, this securely streams the actual binary PDF payload directly from your Supabase Storage buckets.`;
         const blob = new Blob([content], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -1064,10 +1000,10 @@ Click OK to confirm payment authorization.`);
       {!token && (
         <div className="onboarding-overlay">
           <div className="onboarding-card glass-card" style={{ maxWidth: '520px', padding: '36px' }}>
-            <div className="onboarding-brand" style={{ marginBottom: '12px' }}>
-              <BookOpen size={30} />
-            </div>
-            <h2 className="onboarding-title" style={{ fontSize: '28px', marginBottom: '4px' }}>Welcome to Pharmiq</h2>
+            <div className="onboarding-brand" style={{ marginBottom: '12px', display: 'flex', justifyContent: 'center' }}>
+    <img src="/logo.jpg" alt="Jupitor Education Logo" style={{ width: '80px', height: '80px', borderRadius: '50%', objectFit: 'cover' }} />
+  </div>
+            <h2 className="onboarding-title" style={{ fontSize: '28px', marginBottom: '4px' }}>Welcome to Jupitor Education</h2>
             <p className="onboarding-subtitle" style={{ fontSize: '13px', marginBottom: '24px' }}>
               India's Premier EdTech Hub for Competitive Pharmacy Exams
             </p>
@@ -1179,7 +1115,18 @@ Click OK to confirm payment authorization.`);
             {/* Google Authentication Section */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'center', width: '100%' }}>
               {/* Native Google Auth Button wrapper */}
-              <div id="google-signin-button" style={{ minHeight: '40px', width: '100%', display: 'flex', justifyContent: 'center' }}></div>
+              <div style={{ width: '100%', display: 'flex', justifyContent: 'center' }}>
+    <button 
+      type="button"
+      className="btn btn-secondary" 
+      onClick={handleGoogleSignIn} 
+      disabled={authLoading}
+      style={{ width: '100%', background: 'white', color: '#333', fontWeight: 'bold' }}
+    >
+      <img src="https://www.google.com/favicon.ico" alt="Google" style={{ width: '16px', marginRight: '8px' }} />
+      Continue with Google
+    </button>
+  </div>
             </div>
           </div>
         </div>
@@ -1192,7 +1139,7 @@ Click OK to confirm payment authorization.`);
         <div className="onboarding-overlay" style={{ zIndex: 9999, backdropFilter: 'blur(20px)' }}>
           <div className="onboarding-card glass-card fade-in-up" style={{ maxWidth: '700px', width: '90%', padding: '40px', background: 'linear-gradient(135deg, rgba(15,23,42,0.95) 0%, rgba(30,27,75,0.95) 100%)', border: '2px solid rgba(139, 92, 246, 0.3)' }}>
             <h2 style={{ fontSize: '32px', marginBottom: '12px', color: 'white', textAlign: 'center', fontWeight: '800' }}>
-              Welcome to <span style={{ color: 'var(--primary-glow)' }}>Pharmiq</span>
+              Welcome to <span style={{ color: 'var(--primary-glow)' }}>Jupitor Education</span>
             </h2>
             <p style={{ color: 'var(--text-secondary)', fontSize: '15px', marginBottom: '32px', textAlign: 'center' }}>
               To personalize your syllabus, AI solver, and MCQs, please select your primary target course.
@@ -1263,12 +1210,13 @@ Click OK to confirm payment authorization.`);
       {/* ==========================================
         SIDEBAR NAVIGATION PANEL
         ========================================== */}
-      <aside className="sidebar">
+      {token && (
+        <aside className="sidebar">
         <div className="sidebar-logo">
           <div className="logo-icon">
             <BookOpen size={20} />
           </div>
-          <span className="logo-text">Pharmiq</span>
+          <span className="logo-text">Jupitor Education</span>
           <span className="badge badge-success" style={{ fontSize: '9px', padding: '2px 6px' }}>v1.0</span>
         </div>
 
@@ -1354,14 +1302,125 @@ Click OK to confirm payment authorization.`);
           </button>
         </div>
       </aside>
+      )}
 
+      
+      {/* ==========================================
+        MOBILE DRAWER (HAMBURGER MENU)
+        ========================================== */}
+      <div className={`mobile-drawer ${isMobileMenuOpen ? 'open' : ''}`}>
+        <div className="mobile-drawer-overlay" onClick={() => setIsMobileMenuOpen(false)}></div>
+        <div className="mobile-drawer-content">
+          <div className="mobile-drawer-header">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+              <img src="/logo.jpg" alt="Jupitor Education" style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }} />
+              <div>
+                <div style={{ fontWeight: 'bold', fontSize: '16px' }}>Jupitor Education</div>
+                <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>v1.0</div>
+              </div>
+            </div>
+          </div>
+          
+          <div className="mobile-drawer-body">
+              {userRole === 'student' ? (
+                <>
+                  <div className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => { setActiveTab('dashboard'); setIsMobileMenuOpen(false); }}>
+                    <TrendingUp size={18} /><span>Dashboard</span>
+                  </div>
+                  <div className={`nav-item ${activeTab === 'lectures' ? 'active' : ''}`} onClick={() => { setActiveTab('lectures'); setIsMobileMenuOpen(false); }}>
+                    <Play size={18} /><span>Video Lectures</span>
+                  </div>
+                  <div className={`nav-item ${activeTab === 'quiz' ? 'active' : ''}`} onClick={() => { setActiveTab('quiz'); setIsMobileMenuOpen(false); }}>
+                    <HelpCircle size={18} /><span>Practice & Tests</span>
+                  </div>
+                  <div className={`nav-item ${activeTab === 'doubt' ? 'active' : ''}`} onClick={() => { setActiveTab('doubt'); setIsMobileMenuOpen(false); }}>
+                    <Sparkles size={18} /><span>AI Doubt Solver</span>
+                  </div>
+                  <div className={`nav-item ${activeTab === 'library' ? 'active' : ''}`} onClick={() => { setActiveTab('library'); setIsMobileMenuOpen(false); }}>
+                    <FileText size={18} /><span>Study Material</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => { setActiveTab('dashboard'); setIsMobileMenuOpen(false); }}>
+                    <TrendingUp size={18} /><span>Dashboard</span>
+                  </div>
+                  <div className={`nav-item ${activeTab === 'admin' ? 'active' : ''}`} onClick={() => { setActiveTab('admin'); setIsMobileMenuOpen(false); }}>
+                    <Settings size={18} /><span style={{ color: '#34d399', fontWeight: 'bold' }}>Faculty Admin Portal</span>
+                  </div>
+                </>
+              )}
+          </div>
+          
+          <div className="mobile-drawer-footer">
+            <div className="user-badge" style={{ marginBottom: '16px' }}>
+              <div className="user-avatar">{username.charAt(0).toUpperCase()}</div>
+              <div className="user-info">
+                <span className="user-name">{username}</span>
+                <span className="user-role">{userRole === 'admin' ? 'Administrator' : selectedGoal}</span>
+              </div>
+            </div>
+            
+            <button 
+              className="btn btn-secondary" 
+              style={{ width: '100%', marginBottom: '8px', color: '#ef4444', borderColor: 'rgba(239,68,68,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+              onClick={() => {
+                if (window.confirm('Are you sure you want to permanently delete your account? This will wipe all progress.')) {
+                  localStorage.clear();
+                  setToken(null);
+                  setOnboarded(false);
+                  setUsername('');
+                  setIsMobileMenuOpen(false);
+                  addToast('Account deleted successfully.', 'success');
+                }
+              }}
+            >
+              <Trash2 size={16} /> Delete Account
+            </button>
+            
+            <button 
+              className="btn btn-secondary" 
+              style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+              onClick={() => {
+                localStorage.clear();
+                setToken(null);
+                setOnboarded(false);
+                setUsername('');
+                setIsMobileMenuOpen(false);
+                addToast('Logged out successfully.', 'info');
+              }}
+            >
+              <LogOut size={16} /> Log Out
+            </button>
+          </div>
+        </div>
+      </div>
+      
       {/* ==========================================
         MAIN APP CONTENT CONTAINER
         ========================================== */}
+
       <main className="main-content">
         {/* TOP HEADER */}
         <header className="top-navbar">
-          <div className="header-title-section">
+          <div className="header-title-section" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <button 
+              className="mobile-hamburger" 
+              onClick={() => setIsMobileMenuOpen(true)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: 'rgba(255,255,255,0.1)',
+                border: '1px solid rgba(255,255,255,0.2)',
+                borderRadius: '8px',
+                padding: '8px',
+                color: 'white',
+                cursor: 'pointer'
+              }}
+            >
+              <Menu size={26} />
+            </button>
             <h1>
               {activeTab === 'dashboard' && 'Academic Dashboard'}
               {activeTab === 'lectures' && 'Syllabus & Video Lectures'}
@@ -1416,7 +1475,7 @@ Click OK to confirm payment authorization.`);
               </button>
             ) : (
               <span className="badge badge-success" style={{ padding: '8px 12px' }}>
-                ⭐ Pharmiq Gold
+                ⭐ Jupitor Education Gold
               </span>
             )}
           </div>
@@ -1541,32 +1600,70 @@ Click OK to confirm payment authorization.`);
                     <div className="simulated-video">
                       <div className="video-watermark">{username} - {selectedGoal} Active Session</div>
                       
-                      <div className={`video-board ${isPlaying ? 'playing' : ''}`}>
-                        <div style={{ color: 'var(--primary)', marginBottom: '8px' }}>
-                          <BookOpen size={48} className="animate-pulse-slow" style={{ margin: '0 auto' }} />
-                        </div>
-                        <h3>{selectedLecture?.title || 'No Lectures Published'}</h3>
-                        <p>{selectedLecture?.instructor || 'Faculty members can upload new lectures inside the Faculty Portal.'}</p>
-                        
-                        <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', marginTop: '24px' }}>
-                          {!selectedLecture ? (
-                            <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Log in as Faculty to publish your first video lecture!</span>
-                          ) : selectedLecture.isPremium && !isPremiumUser ? (
-                            <button className="btn btn-primary" onClick={() => setShowSubscriptionModal(true)}>
-                              <Lock size={16} /> Unlock Premium Lecture
-                            </button>
-                          ) : (
+                      
+                      <div className={`video-board ${isPlaying ? 'playing' : ''}`} style={{ padding: isPlaying ? '0' : '40px 20px' }}>
+                        {!isPlaying ? (
+                          <>
+                            <div style={{ color: 'var(--primary)', marginBottom: '8px' }}>
+                              <BookOpen size={48} className="animate-pulse-slow" style={{ margin: '0 auto' }} />
+                            </div>
+                            <h3>{selectedLecture?.title || 'No Lectures Published'}</h3>
+                            <p>{selectedLecture?.instructor || 'Faculty members can link new YouTube lectures inside the Faculty Portal.'}</p>
+                            
+                            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', marginTop: '24px' }}>
+                              {!selectedLecture ? (
+                                <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Log in as Faculty to publish your first video lecture!</span>
+                              ) : selectedLecture.isPremium && !isPremiumUser ? (
+                                <button className="btn btn-primary" onClick={() => setShowSubscriptionModal(true)}>
+                                  <Lock size={16} /> Unlock Premium Lecture
+                                </button>
+                              ) : (
+                                <button 
+                                  className="btn btn-primary"
+                                  onClick={() => {
+                                    if (selectedLecture?.videoUrl && (selectedLecture.videoUrl.includes('youtube.com') || selectedLecture.videoUrl.includes('youtu.be'))) {
+                                      setIsPlaying(true);
+                                    } else {
+                                      window.open(selectedLecture?.videoUrl || '#', '_blank');
+                                    }
+                                  }}
+                                >
+                                  {selectedLecture?.videoUrl && (selectedLecture.videoUrl.includes('youtube.com') || selectedLecture.videoUrl.includes('youtu.be')) ? '▶ Play Video' : '🔗 Open Link'}
+                                </button>
+                              )}
+                            </div>
+                          </>
+                        ) : (
+                          <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+                            <iframe 
+                              width="100%" 
+                              height="100%" 
+                              src={
+                                (() => {
+                                  if (!selectedLecture?.videoUrl) return '';
+                                  let url = selectedLecture.videoUrl;
+                                  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|live\/|shorts\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+                                  const match = url.match(regExp);
+                                  if (match && match[2].length === 11) {
+                                    return `https://www.youtube.com/embed/${match[2]}?autoplay=1`;
+                                  }
+                                  return url.includes('youtube.com/embed') ? url : url;
+                                })()
+                              }
+                              title="YouTube video player" 
+                              frameBorder="0" 
+                              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" 
+                              allowFullScreen
+                              style={{ borderRadius: '16px' }}
+                            ></iframe>
                             <button 
-                              className="btn btn-primary"
-                              onClick={() => {
-                                setIsPlaying(!isPlaying);
-                                addToast(isPlaying ? 'Playback paused' : 'Simulating streaming lecture...', 'success');
-                              }}
+                              onClick={() => setIsPlaying(false)} 
+                              style={{ position: 'absolute', top: '-40px', right: '0', background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '14px' }}
                             >
-                              {isPlaying ? 'Pause Playback' : 'Start Streaming'}
+                              Close Video ✕
                             </button>
-                          )}
-                        </div>
+                          </div>
+                        )}
                       </div>
 
                       {/* Video Player controls HUD overlay */}
@@ -2127,7 +2224,7 @@ Click OK to confirm payment authorization.`);
           {activeTab === 'admin' && userRole === 'admin' && (
             <div className="fade-in-up" style={{ maxWidth: '900px', margin: '0 auto' }}>
               <div className="admin-card glass-card" style={{ marginBottom: '24px' }}>
-                <h2 className="admin-header-glow">👨‍🏫 Pharmiq Faculty Control Console</h2>
+                <h2 className="admin-header-glow">👨‍🏫 Jupitor Education Faculty Control Console</h2>
                 <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '24px' }}>
                   Simulate core administrative and educator actions. Injected data will dynamically appear immediately inside the respective dashboard screens!
                 </p>
@@ -2232,19 +2329,26 @@ Click OK to confirm payment authorization.`);
                       </div>
 
                       <div>
-                        <label className="form-label" style={{ fontSize: '11.5px' }}>📁 Syllabus Notes / PDF Attachment File</label>
-                        <input 
-                          type="file" 
-                          className="form-input"
-                          style={{ padding: '6px', fontSize: '12px' }}
-                          onChange={(e) => {
-                            if (e.target.files && e.target.files[0]) {
-                              setAdminLectureFile(e.target.files[0]);
-                              setAdminLectureFileName(e.target.files[0].name);
-                              addToast(`Selected notes file: ${e.target.files[0].name}`, 'success');
-                            }
-                          }}
-                        />
+                        <label className="form-label" style={{ fontSize: '11.5px' }}>🔗 Content Type & Link</label>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <select 
+                            className="form-input" 
+                            style={{ flex: '0 0 120px' }}
+                            value={adminLectureType}
+                            onChange={(e) => setAdminLectureType(e.target.value as 'youtube' | 'pdf')}
+                          >
+                            <option value="youtube">YouTube</option>
+                            <option value="pdf">PDF Link</option>
+                          </select>
+                          <input 
+                            type="url" 
+                            className="form-input"
+                            placeholder={adminLectureType === 'youtube' ? 'https://youtube.com/watch?v=...' : 'https://example.com/notes.pdf'}
+                            value={adminLectureUrl}
+                            onChange={(e) => setAdminLectureUrl(e.target.value)}
+                            required
+                          />
+                        </div>
                       </div>
 
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -2505,7 +2609,7 @@ Click OK to confirm payment authorization.`);
             </button>
 
             <div style={{ textAlign: 'center', marginBottom: '24px' }}>
-              <span className="badge badge-primary" style={{ marginBottom: '8px' }}>Pharmiq premium</span>
+              <span className="badge badge-primary" style={{ marginBottom: '8px' }}>Jupitor Education premium</span>
               <h2>Select Your Exam Success Plan</h2>
               <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
                 Unlock all premium lectures, standard video downloads, test papers, and instant AI doubt answers.
@@ -2547,7 +2651,7 @@ Click OK to confirm payment authorization.`);
               {/* Plan 2 */}
               <div className="pricing-card premium">
                 <div className="pricing-badge">BEST VALUE</div>
-                <span className="pricing-card-title">Pharmiq Gold Pack</span>
+                <span className="pricing-card-title">Jupitor Education Gold Pack</span>
                 <div className="pricing-price">
                   <span className="pricing-amount">
                     ₹{appliedDiscount > 0 ? 1999 : 3999}
@@ -2560,7 +2664,7 @@ Click OK to confirm payment authorization.`);
                   <li><CheckCircle size={12} /> Full length mock exams</li>
                   <li><CheckCircle size={12} /> Download PDFs and sheets</li>
                 </ul>
-                <button className="btn btn-primary" onClick={() => handlePaymentSubmit('Pharmiq Gold Pack', 3999)}>
+                <button className="btn btn-primary" onClick={() => handlePaymentSubmit('Jupitor Education Gold Pack', 3999)}>
                   Upgrade Gold Now
                 </button>
               </div>

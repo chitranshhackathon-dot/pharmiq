@@ -16,7 +16,7 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const JWT_SECRET = process.env.JWT_SECRET || 'pharmiq-super-secret-key-123456';
+const JWT_SECRET = process.env.JWT_SECRET || 'jupitoreducation-super-secret-key-123456';
 
 // Middleware
 app.use(cors());
@@ -60,7 +60,7 @@ function loadLocalUsers() {
     }
 
     // Auto-seed local Admin
-    const adminEmail = 'admin@pharmiq.com';
+    const adminEmail = 'admin@jupitoreducation.com';
     const hasAdmin = usersList.some(u => u.email === adminEmail);
     if (!hasAdmin) {
       usersList.push({
@@ -105,7 +105,7 @@ async function seedSupabaseAdmin() {
     const { data: adminUser, error } = await supabase
       .from('users')
       .select('*')
-      .eq('email', 'admin@pharmiq.com')
+      .eq('email', 'admin@jupitoreducation.com')
       .maybeSingle();
 
     if (error) {
@@ -115,9 +115,9 @@ async function seedSupabaseAdmin() {
     }
 
     if (!adminUser) {
-      console.log('🌱 [Seeder] Seeding admin@pharmiq.com credentials into your hosted Supabase DB...');
+      console.log('🌱 [Seeder] Seeding admin@jupitoreducation.com credentials into your hosted Supabase DB...');
       const { error: insertError } = await supabase.from('users').insert({
-        email: 'admin@pharmiq.com',
+        email: 'admin@jupitoreducation.com',
         password: bcrypt.hashSync('admin@001', 10),
         username: 'Dr. Ramesh (Admin)',
         goal: 'GPAT',
@@ -131,7 +131,7 @@ async function seedSupabaseAdmin() {
       if (insertError) {
         console.error('❌ [Seeder] Failed to seed admin in Supabase:', insertError.message);
       } else {
-        console.log('🎉 [Seeder] admin@pharmiq.com seeded successfully inside Supabase PostgreSQL!');
+        console.log('🎉 [Seeder] admin@jupitoreducation.com seeded successfully inside Supabase PostgreSQL!');
       }
     }
   } catch (err) {
@@ -524,6 +524,37 @@ app.post('/api/user/update-goal', async (req, res) => {
     }
   } catch (err) {
     console.error('Update goal error:', err);
+    res.status(401).json({ error: 'Invalid Session' });
+  }
+});
+
+// DELETE ACCOUNT
+app.delete('/api/users', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ error: 'Unauthorized' });
+    
+    const token = authHeader.split(' ')[1];
+    const decoded = jwt.verify(token, JWT_SECRET);
+    
+    if (isSupabaseConfigured) {
+      const { error } = await supabase
+        .from('users')
+        .delete()
+        .eq('id', decoded.userId);
+        
+      if (error) return res.status(500).json({ error: 'Failed to delete account' });
+      return res.json({ success: true });
+    } else {
+      const userIndex = localUsers.findIndex(u => u.id === decoded.userId);
+      if (userIndex === -1) return res.status(404).json({ error: 'User not found' });
+      
+      localUsers.splice(userIndex, 1);
+      saveLocalUsers(localUsers);
+      return res.json({ success: true });
+    }
+  } catch (err) {
+    console.error('Delete account error:', err);
     res.status(401).json({ error: 'Invalid Session' });
   }
 });
@@ -935,6 +966,6 @@ app.delete('/api/admin/users/:id', async (req, res) => {
 
 // Start Server
 app.listen(PORT, () => {
-  console.log(`🚀 Pharmiq Dual-Database Auth Backend is active on http://localhost:${PORT}`);
+  console.log(`🚀 Jupitor Education Dual-Database Auth Backend is active on http://localhost:${PORT}`);
   console.log(`📁 JSON persistent fallback DB: ${DB_FILE}`);
 });

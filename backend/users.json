@@ -37,5 +37,18 @@
     "role": "student",
     "googleId": null,
     "createdAt": "2026-05-25T14:54:42.900Z"
+  },
+  {
+    "id": "usr_admin",
+    "email": "admin@jupitoreducation.com",
+    "password": "$2a$10$jqYA7cf.A42CvkCsEtH5LeFEaSFg9tT/JqR78uulCKlW..qg/SHmm",
+    "username": "Dr. Ramesh (Admin)",
+    "goal": "GPAT",
+    "isPremiumUser": true,
+    "streakDays": 99,
+    "xpPoints": 9999,
+    "role": "admin",
+    "googleId": null,
+    "createdAt": "2026-05-26T19:15:17.396Z"
   }
 ]
