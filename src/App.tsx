@@ -111,6 +111,9 @@ export default function App() {
   const [userBatch, setUserBatch] = useState<string>(() => {
     return localStorage.getItem('pharmiq_batch') || '';
   });
+  const [userEmail, setUserEmail] = useState<string>(() => {
+    return localStorage.getItem('pharmiq_email') || '';
+  });
 
   // ==========================================
   // BACKEND AUTHENTICATION STATES
@@ -177,15 +180,19 @@ export default function App() {
       const userToken = data.token;
       const userObj = data.user || {};
       
-      localStorage.setItem('jupitor_token', userToken);
-      localStorage.setItem('jupitor_username', userObj.username || displayName);
-      localStorage.setItem('jupitor_role', userObj.role || 'student');
+      localStorage.setItem('pharmiq_token', userToken);
+      localStorage.setItem('pharmiq_username', userObj.username || displayName);
+      localStorage.setItem('pharmiq_role', userObj.role || 'student');
+      localStorage.setItem('pharmiq_email', userObj.email || '');
+      localStorage.setItem('pharmiq_premium', userObj.isPremiumUser ? 'true' : 'false');
+      localStorage.setItem('pharmiq_goal', userObj.goal || selectedGoal || '');
       
       setToken(userToken);
       setUsername(userObj.username || displayName);
       setSelectedGoal(userObj.goal || selectedGoal || '');
       setUserRole(userObj.role || 'student');
-      setIsPremiumUser(userObj.isPremium || false);
+      setUserEmail(userObj.email || '');
+      setIsPremiumUser(userObj.isPremiumUser || false);
       setOnboarded(true);
       addToast('Signed in with Google successfully!', 'success');
     } catch (err: any) {
@@ -240,6 +247,7 @@ export default function App() {
       const userRoleStr = userObj.role || 'student';
       const userStreak = userObj.streakDays ?? 1;
       const userXp = userObj.xpPoints ?? 150;
+      const userEmailVal = userObj.email || authEmail || '';
 
       localStorage.setItem('pharmiq_token', userToken);
       localStorage.setItem('pharmiq_username', userUsername);
@@ -247,6 +255,7 @@ export default function App() {
       localStorage.setItem('pharmiq_batch', userBatchValue);
       localStorage.setItem('pharmiq_premium', userPremium ? 'true' : 'false');
       localStorage.setItem('pharmiq_role', userRoleStr);
+      localStorage.setItem('pharmiq_email', userEmailVal);
 
       setToken(userToken);
       setUsername(userUsername);
@@ -254,6 +263,7 @@ export default function App() {
       setUserBatch(userBatchValue);
       setIsPremiumUser(userPremium);
       setUserRole(userRoleStr);
+      setUserEmail(userEmailVal);
       setStreakDays(userStreak);
       setXpPoints(userXp);
 
@@ -296,6 +306,7 @@ export default function App() {
 
 
   const [showGoalModal, setShowGoalModal] = useState<boolean>(false);
+  const [studentSearchQuery, setStudentSearchQuery] = useState<string>('');
   const [studentProfiles, setStudentProfiles] = useState<{
     id: string;
     username: string;
@@ -305,6 +316,7 @@ export default function App() {
     goal: string;
     xp: number;
     streak: number;
+    batch?: string;
   }[]>([]);
 
   // ==========================================
@@ -560,29 +572,18 @@ export default function App() {
       });
   };
 
-  // Simulated Razorpay payment flow
+  // WhatsApp admission payment redirection flow
   const handlePaymentSubmit = (planName: string, amount: number) => {
-    addToast('Opening Secured Razorpay Payment Gateway...', 'info');
+    const finalPrice = Math.round(amount * (1 - appliedDiscount));
+    addToast('Opening WhatsApp to contact Pharmiq Admissions counselor...', 'info');
+    
+    const adminPhone = '9125048085'; // Admin mobile number
+    const message = `Hi Pharmiq Admin, I am "${username}" (Email: ${userEmail || 'Not Provided'}). I want to unlock Premium Access for the "${planName}" (Price: ₹${finalPrice}). Please share the UPI / Payment QR code!`;
     
     setTimeout(() => {
-      const finalPrice = Math.round(amount * (1 - appliedDiscount));
-      const payConfirm = window.confirm(`[Jupitor Education Secured Payment Gateway]
-      
-Merchant: Jupitor Education EdTech India
-Plan: ${planName}
-Amount to Pay: ₹${finalPrice} (Discount Applied: ${appliedDiscount * 100}%)
-Payment Method: UPI / Razorpay Gateway Simulation
-
-Click OK to confirm payment authorization.`);
-
-      if (payConfirm) {
-        setIsPremiumUser(true);
-        setShowSubscriptionModal(false);
-        addToast('Payment Successful! Welcome to Jupitor Education Gold Premium!', 'success');
-        setXpPoints(x => x + 200);
-      } else {
-        addToast('Payment cancelled by student.', 'info');
-      }
+      window.open(`https://wa.me/${adminPhone}?text=${encodeURIComponent(message)}`, '_blank');
+      setShowSubscriptionModal(false);
+      addToast('WhatsApp Helpdesk loaded successfully! Please message the Admin for activation.', 'success');
     }, 600);
   };
 
@@ -1293,6 +1294,7 @@ Click OK to confirm payment authorization.`);
               setToken(null);
               setOnboarded(false);
               setUsername('');
+              setUserEmail('');
               setIsPremiumUser(false);
               setUserRole('student');
               addToast('Logged out successfully.', 'info');
@@ -1370,6 +1372,7 @@ Click OK to confirm payment authorization.`);
                   setToken(null);
                   setOnboarded(false);
                   setUsername('');
+                  setUserEmail('');
                   setIsMobileMenuOpen(false);
                   addToast('Account deleted successfully.', 'success');
                 }
@@ -1386,6 +1389,7 @@ Click OK to confirm payment authorization.`);
                 setToken(null);
                 setOnboarded(false);
                 setUsername('');
+                setUserEmail('');
                 setIsMobileMenuOpen(false);
                 addToast('Logged out successfully.', 'info');
               }}
@@ -2497,13 +2501,32 @@ Click OK to confirm payment authorization.`);
                     View student details, trace their current goals, update their registered exam patterns, or toggle Gold Premium subscriptions.
                   </p>
 
+                  {/* Dynamic Student Search Input */}
+                  <div style={{ marginBottom: '20px', maxWidth: '400px' }}>
+                    <input 
+                      type="text" 
+                      className="form-input" 
+                      placeholder="🔍 Search student by name or email..." 
+                      value={studentSearchQuery}
+                      onChange={(e) => setStudentSearchQuery(e.target.value)}
+                      style={{ background: 'rgba(255,255,255,0.03)', borderColor: 'rgba(255,255,255,0.08)', borderRadius: '8px' }}
+                    />
+                  </div>
+
                   <div className="student-profile-list" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                    {studentProfiles.length === 0 ? (
-                      <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-secondary)' }}>
-                        No students are currently registered on this database node.
-                      </div>
-                    ) : (
-                      studentProfiles.map((student) => (
+                    {(() => {
+                      const filtered = studentProfiles.filter(s => 
+                        (s.username || '').toLowerCase().includes(studentSearchQuery.toLowerCase()) ||
+                        (s.email || '').toLowerCase().includes(studentSearchQuery.toLowerCase())
+                      );
+                      if (filtered.length === 0) {
+                        return (
+                          <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-secondary)' }}>
+                            {studentProfiles.length === 0 ? 'No students are currently registered.' : 'No student profiles match your search criteria.'}
+                          </div>
+                        );
+                      }
+                      return filtered.map((student) => (
                         <div key={student.id} className="glass-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', background: 'rgba(255,255,255,0.02)', borderColor: 'rgba(255,255,255,0.05)', flexWrap: 'wrap', gap: '16px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                             <div className="avatar-circle" style={{ width: '42px', height: '42px', backgroundColor: 'var(--primary)', color: 'white', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '16px' }}>
@@ -2545,7 +2568,7 @@ Click OK to confirm payment authorization.`);
                               <select 
                                 className="form-input" 
                                 style={{ padding: '6px 12px', fontSize: '12.5px', minWidth: '150px' }}
-                                value={(student as any).batch || ''}
+                                value={student.batch || ''}
                                 onChange={(e) => handleAdminUpdateUser(student.id, { batch: e.target.value })}
                               >
                                 <option value="">No Batch Assigned</option>
@@ -2584,8 +2607,8 @@ Click OK to confirm payment authorization.`);
                             </div>
                           </div>
                         </div>
-                      ))
-                    )}
+                      ));
+                    })()}
                   </div>
                 </div>
 
